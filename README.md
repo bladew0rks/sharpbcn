@@ -42,12 +42,26 @@ averaged over the maps (higher is better).
 | SharpBcn | 0.80 s | 83.18 | 0.34 s | 89.30 |
 | rgbcx (bc7enc_rdo), level 18 | 9.54 s | 83.70 | 2.74 s | 88.50 |
 | rgbcx (bc7enc_rdo), level 10 | 3.78 s | 82.93 | | |
+| icbc, level 9 | 2.03 s | 82.82 | | |
+| icbc, level 8 | 0.73 s | 81.50 | | |
 | Compressonator 4.5.52, quality 1.0 | 2.92 s | 81.12 | 0.77 s | 89.21 |
+| stb_dxt, high quality | 0.32 s | 80.70 | 0.18 s | 87.91 |
 | ISPC Texture Compressor | 0.36 s | 77.84 | 0.21 s | 88.06 |
 
-Settings: `bc7enc -1 -L18`, `bc7enc -1 -L10` and `bc7enc -4`; `compressonatorcli -fd BC1|BC4 -Quality 1.0 -nomipmap`;
-ISPC Texture Compressor built with AVX-512 and called from 16 threads. Excluding PNG loading, SharpBcn spends
-0.27 s encoding BC1 and 0.06 s encoding BC4.
+Settings: `bc7enc -1 -L18`, `bc7enc -1 -L10` and `bc7enc -4`; `compressonatorcli -fd BC1|BC4 -Quality 1.0 -nomipmap`.
+[icbc](https://github.com/castano/icbc) uses the D3D10 decoder, equal color weights, 3-color mode and 3-color black;
+[stb_dxt](https://github.com/nothings/stb/blob/master/stb_dxt.h) uses `STB_DXT_HIGHQUAL`. icbc, stb_dxt and the
+ISPC Texture Compressor are built with AVX-512 and run from 16 threads; icbc and stb_dxt load PNGs with stb_image.
+
+Encode time without PNG loading, for the encoders that run in-process:
+
+| Encoder | BC1 | BC4 |
+|---|---|---|
+| SharpBcn | 0.27 s | 0.06 s |
+| icbc, level 9 | 1.80 s | |
+| icbc, level 8 | 0.51 s | |
+| stb_dxt | 0.10 s | 0.04 s |
+| ISPC Texture Compressor | 0.02 s | 0.03 s |
 
 ## License
 
