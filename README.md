@@ -21,21 +21,21 @@ byte[] back = BcDecoder.Decode(BcFormat.Bc3, dxt5, width, height);
 BcEncoder.Encode(BcFormat.Bc1, rgba, width, height, output.AsSpan(offset));
 ```
 
-`BcFormat.Bc1Alpha` treats pixels with alpha below `alphaThreshold` (default 128) as transparent.
-Pass `parallel: false` to encode on the calling thread only.
+With `BcFormat.Bc1Alpha`, pixels below `alphaThreshold` (128 unless you pass something else) come out transparent.
 
 ## Performance
 
-Inputs are CC0 textures, downloaded as 4K PNGs:
+Test textures, all 4K PNGs:
 
-- [Leaf001](https://ambientcg.com/view?id=Leaf001) (ambientCG): Color, NormalDX, AmbientOcclusion, Opacity, Roughness
-- [MetalPlates006](https://ambientcg.com/view?id=MetalPlates006) (ambientCG): Color, NormalDX, Metalness, Roughness
-- [rusty_metal_02](https://polyhaven.com/a/rusty_metal_02) (Poly Haven): diff, nor_dx
+- [Leaf001](https://ambientcg.com/view?id=Leaf001) (ambientCG): color, normal, AO, opacity, roughness
+- [MetalPlates006](https://ambientcg.com/view?id=MetalPlates006) (ambientCG): color, normal, metalness, roughness
+- [rusty_metal_02](https://polyhaven.com/a/rusty_metal_02) (Poly Haven): color, normal
 
-BC1 is measured on the six color and normal maps (Leaf001's alpha removed), BC4 on the five single-channel maps.
-Time is wall clock for the whole set including PNG loading, on a Ryzen 7 9800X3D using all 16 threads.
-Quality is [SSIMULACRA 2](https://github.com/cloudinary/ssimulacra2) between the source and the decoded result,
-averaged over the maps (higher is better).
+How it's measured:
+
+- BC1 runs on the six color and normal maps, with Leaf001's alpha dropped; BC4 runs on the five grayscale maps
+- Time covers the whole set, PNG loading included, on a Ryzen 7 9800X3D using all 16 threads
+- Quality is the [SSIMULACRA 2](https://github.com/cloudinary/ssimulacra2) score against the source, averaged over the maps, so higher is better
 
 | Encoder | BC1 time | BC1 quality | BC4 time | BC4 quality |
 |---|---|---|---|---|
@@ -48,20 +48,13 @@ averaged over the maps (higher is better).
 | stb_dxt, high quality | 0.32 s | 80.70 | 0.18 s | 87.91 |
 | ISPC Texture Compressor | 0.36 s | 77.84 | 0.21 s | 88.06 |
 
-Settings: `bc7enc -1 -L18`, `bc7enc -1 -L10` and `bc7enc -4`; `compressonatorcli -fd BC1|BC4 -Quality 1.0 -nomipmap`.
-[icbc](https://github.com/castano/icbc) uses the D3D10 decoder, equal color weights, 3-color mode and 3-color black;
-[stb_dxt](https://github.com/nothings/stb/blob/master/stb_dxt.h) uses `STB_DXT_HIGHQUAL`. icbc, stb_dxt and the
-ISPC Texture Compressor are built with AVX-512 and run from 16 threads; icbc and stb_dxt load PNGs with stb_image.
+What the other encoders ran with:
 
-Encode time without PNG loading, for the encoders that run in-process:
-
-| Encoder | BC1 | BC4 |
-|---|---|---|
-| SharpBcn | 0.27 s | 0.06 s |
-| icbc, level 9 | 1.80 s | |
-| icbc, level 8 | 0.51 s | |
-| stb_dxt | 0.10 s | 0.04 s |
-| ISPC Texture Compressor | 0.02 s | 0.03 s |
+- rgbcx: `bc7enc -1 -L18`, `bc7enc -1 -L10` and `bc7enc -4`
+- Compressonator: `compressonatorcli -fd BC1` or `-fd BC4`, plus `-Quality 1.0 -nomipmap`
+- [icbc](https://github.com/castano/icbc): D3D10 decoder, equal color weights, 3-color mode and 3-color black turned on
+- [stb_dxt](https://github.com/nothings/stb/blob/master/stb_dxt.h): `STB_DXT_HIGHQUAL`
+- icbc, stb_dxt and the ISPC Texture Compressor were built with AVX-512 and run on 16 threads; icbc and stb_dxt read the PNGs through stb_image
 
 ## License
 
