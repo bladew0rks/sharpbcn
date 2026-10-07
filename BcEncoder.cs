@@ -258,12 +258,24 @@ public static class BcEncoder
             return;
         }
 
-        Span<int> endpoints = stackalloc int[6];
         Span<int> bestEndpoints = stackalloc int[6];
-        Span<byte> indices = stackalloc byte[16];
         Span<byte> bestIndices = stackalloc byte[16];
-        Span<int> refined = stackalloc int[6];
-        Span<byte> refinedIndices = stackalloc byte[16];
+        long bestError = FitBestCandidate(colors, bestEndpoints, bestIndices);
+
+        if (ClusterFit(colors, bestIndices, bestEndpoints, ref bestError, ClusterOrderingsPerBlock))
+        {
+            ClusterFit(colors, bestIndices, bestEndpoints, ref bestError, 0);
+        }
+
+        SearchColorEndpoints(colors, bestEndpoints, ref bestError);
+        MatchFourColor(colors, bestEndpoints, bestIndices);
+        WriteFourColorBlock(bestEndpoints, bestIndices, dest);
+    }
+
+    private static long FitBestCandidate(ReadOnlySpan<int> colors, Span<int> bestEndpoints, Span<byte> bestIndices)
+    {
+        Span<int> endpoints = stackalloc int[6];
+        Span<byte> indices = stackalloc byte[16];
         long bestError = long.MaxValue;
 
         for (int candidate = 0; candidate < 3; candidate++)
@@ -283,27 +295,7 @@ public static class BcEncoder
             }
 
             QuantizeEndpoints(endpoints);
-            long error = MatchFourColor(colors, endpoints, indices);
-
-            for (int iteration = 0; iteration < 3; iteration++)
-            {
-                if (!RefineFourColor(colors, indices, refined))
-                {
-                    break;
-                }
-
-                QuantizeEndpoints(refined);
-                long refinedError = MatchFourColor(colors, refined, refinedIndices);
-
-                if (refinedError >= error)
-                {
-                    break;
-                }
-
-                refined.CopyTo(endpoints);
-                refinedIndices.CopyTo(indices);
-                error = refinedError;
-            }
+            long error = RefineCandidate(colors, endpoints, indices, MatchFourColor(colors, endpoints, indices));
 
             if (error < bestError)
             {
@@ -313,14 +305,35 @@ public static class BcEncoder
             }
         }
 
-        if (ClusterFit(colors, bestIndices, bestEndpoints, ref bestError, ClusterOrderingsPerBlock))
+        return bestError;
+    }
+
+    private static long RefineCandidate(ReadOnlySpan<int> colors, Span<int> endpoints, Span<byte> indices, long error)
+    {
+        Span<int> refined = stackalloc int[6];
+        Span<byte> refinedIndices = stackalloc byte[16];
+
+        for (int iteration = 0; iteration < 3; iteration++)
         {
-            ClusterFit(colors, bestIndices, bestEndpoints, ref bestError, 0);
+            if (!RefineFourColor(colors, indices, refined))
+            {
+                break;
+            }
+
+            QuantizeEndpoints(refined);
+            long refinedError = MatchFourColor(colors, refined, refinedIndices);
+
+            if (refinedError >= error)
+            {
+                break;
+            }
+
+            refined.CopyTo(endpoints);
+            refinedIndices.CopyTo(indices);
+            error = refinedError;
         }
 
-        SearchColorEndpoints(colors, bestEndpoints, ref bestError);
-        MatchFourColor(colors, bestEndpoints, bestIndices);
-        WriteFourColorBlock(bestEndpoints, bestIndices, dest);
+        return error;
     }
 
     internal const int EndpointSearchRounds = 4;
@@ -391,8 +404,35 @@ public static class BcEncoder
 
     private static bool ClusterFit(ReadOnlySpan<int> colors, ReadOnlySpan<byte> indices, Span<int> endpoints, ref long error, int orderingCount)
     {
+        Span<int> sorted = stackalloc int[48];
+        Span<int> totals = stackalloc int[3];
+        SortAlongAxis(colors, endpoints, sorted, totals);
+
+        Span<int> fit = stackalloc int[6];
+        endpoints.CopyTo(fit);
+        long fitError = int.MaxValue;
+
+        if (orderingCount > 0)
+        {
+            TryTableOrderings(colors, indices, sorted, totals, orderingCount, fit, ref fitError);
+        }
+
+        TryColorGroups(colors, sorted, totals, fit, ref fitError);
+
+        if (fitError >= error)
+        {
+            return false;
+        }
+
+        error = fitError;
+        fit.CopyTo(endpoints);
+        return true;
+    }
+
+    private static void SortAlongAxis(ReadOnlySpan<int> colors, ReadOnlySpan<int> axis, Span<int> sorted, Span<int> totals)
+    {
         Span<int> keys = stackalloc int[16];
-        int axisRed = endpoints[3] - endpoints[0], axisGreen = endpoints[4] - endpoints[1], axisBlue = endpoints[5] - endpoints[2];
+        int axisRed = axis[3] - axis[0], axisGreen = axis[4] - axis[1], axisBlue = axis[5] - axis[2];
 
         for (int i = 0; i < 16; i++)
         {
@@ -400,8 +440,6 @@ public static class BcEncoder
         }
 
         keys.Sort();
-        Span<int> sorted = stackalloc int[48];
-        Span<int> totals = stackalloc int[3];
         totals.Clear();
 
         for (int i = 0; i < 16; i++)
@@ -414,32 +452,32 @@ public static class BcEncoder
                 totals[c] += colors[pixel * 3 + c];
             }
         }
+    }
 
-        Span<int> fit = stackalloc int[6];
-        endpoints.CopyTo(fit);
-        long fitError = int.MaxValue;
+    private static void TryTableOrderings(ReadOnlySpan<int> colors, ReadOnlySpan<byte> indices, ReadOnlySpan<int> sorted, ReadOnlySpan<int> totals,
+        int orderingCount, Span<int> fit, ref long fitError)
+    {
+        int countC0 = 0, countNearC0 = 0, countNearC1 = 0;
 
-        if (orderingCount > 0)
+        for (int i = 0; i < 16; i++)
         {
-            int countC0 = 0, countNearC0 = 0, countNearC1 = 0;
-
-            for (int i = 0; i < 16; i++)
-            {
-                countC0 += indices[i] == IndexC0 ? 1 : 0;
-                countNearC0 += indices[i] == IndexNearC0 ? 1 : 0;
-                countNearC1 += indices[i] == IndexNearC1 ? 1 : 0;
-            }
-
-            int start = HistogramIndex(countC0, countNearC0, countNearC1) * ClusterTables.OrderingsPerHistogram;
-            ReadOnlySpan<byte> histograms = ClusterTables.Histograms;
-
-            for (int ordering = 0; ordering < orderingCount; ordering++)
-            {
-                int histogramOffset = ClusterTables.BestOrderings[start + ordering] * 4;
-                TrySplit(colors, sorted, totals, histograms[histogramOffset], histograms[histogramOffset + 1], histograms[histogramOffset + 2], fit, ref fitError);
-            }
+            countC0 += indices[i] == IndexC0 ? 1 : 0;
+            countNearC0 += indices[i] == IndexNearC0 ? 1 : 0;
+            countNearC1 += indices[i] == IndexNearC1 ? 1 : 0;
         }
 
+        int start = HistogramIndex(countC0, countNearC0, countNearC1) * ClusterTables.OrderingsPerHistogram;
+        ReadOnlySpan<byte> histograms = ClusterTables.Histograms;
+
+        for (int ordering = 0; ordering < orderingCount; ordering++)
+        {
+            int histogramOffset = ClusterTables.BestOrderings[start + ordering] * 4;
+            TrySplit(colors, sorted, totals, histograms[histogramOffset], histograms[histogramOffset + 1], histograms[histogramOffset + 2], fit, ref fitError);
+        }
+    }
+
+    private static void TryColorGroups(ReadOnlySpan<int> colors, ReadOnlySpan<int> sorted, ReadOnlySpan<int> totals, Span<int> fit, ref long fitError)
+    {
         Span<int> groupSizes = stackalloc int[4];
         int group = 0;
         groupSizes.Clear();
@@ -477,15 +515,6 @@ public static class BcEncoder
 
             TrySplit(colors, sorted, totals, counts[0], counts[1], counts[2], fit, ref fitError);
         }
-
-        if (fitError >= error)
-        {
-            return false;
-        }
-
-        error = fitError;
-        fit.CopyTo(endpoints);
-        return true;
     }
 
     private static void TrySplit(ReadOnlySpan<int> colors, ReadOnlySpan<int> sorted, ReadOnlySpan<int> totals, int countC0, int countNearC0, int countNearC1,

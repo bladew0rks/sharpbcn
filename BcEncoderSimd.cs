@@ -106,24 +106,33 @@ internal static class BcEncoderSimd
     public static void EncodeColor(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         Span<int> color0, Span<int> color1, Span<uint> masks)
     {
-        Span<Vector256<int>> indices = stackalloc Vector256<int>[16];
         Span<Vector256<int>> bestIndices = stackalloc Vector256<int>[16];
-        Span<Vector256<int>> refinedIndices = stackalloc Vector256<int>[16];
-        Span<Vector256<float>> rf = stackalloc Vector256<float>[16];
-        Span<Vector256<float>> gf = stackalloc Vector256<float>[16];
-        Span<Vector256<float>> bf = stackalloc Vector256<float>[16];
+        Vector256<int> bestError = FitBestCandidate(r, g, b, bestIndices, out Endpoints best);
+        ApplyClusterFit(r, g, b, bestIndices, ref best, ref bestError);
+        SearchColorEndpoints(r, g, b, ref best, ref bestError);
+        MatchFourColor(r, g, b, best, bestIndices);
+        PackColorBlocks(best, bestIndices, color0, color1, masks);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static Vector256<int> FitBestCandidate(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+        Span<Vector256<int>> bestIndices, out Endpoints best)
+    {
+        Span<Vector256<int>> indices = stackalloc Vector256<int>[16];
+        Span<Vector256<float>> red = stackalloc Vector256<float>[16];
+        Span<Vector256<float>> green = stackalloc Vector256<float>[16];
+        Span<Vector256<float>> blue = stackalloc Vector256<float>[16];
 
         for (int i = 0; i < 16; i++)
         {
-            rf[i] = Vector256.ConvertToSingle(r[i]);
-            gf[i] = Vector256.ConvertToSingle(g[i]);
-            bf[i] = Vector256.ConvertToSingle(b[i]);
+            red[i] = Vector256.ConvertToSingle(r[i]);
+            green[i] = Vector256.ConvertToSingle(g[i]);
+            blue[i] = Vector256.ConvertToSingle(b[i]);
         }
 
-        Endpoints best = default;
+        best = default;
         Vector256<int> bestError = default;
-
-        Endpoints principal = PrincipalEndpoints(r, g, b, rf, gf, bf);
+        Endpoints principal = PrincipalEndpoints(r, g, b, red, green, blue);
 
         for (int candidate = 0; candidate < 3; candidate++)
         {
@@ -135,84 +144,94 @@ internal static class BcEncoderSimd
             };
             QuantizeEndpoints(ref endpoints);
             Vector256<int> error = MatchFourColor(r, g, b, endpoints, indices);
-            Vector256<int> active = Vector256<int>.AllBitsSet;
-
-            for (int iteration = 0; iteration < 3; iteration++)
-            {
-                Vector256<int> solved = RefineFourColor(rf, gf, bf, indices, out Endpoints refined);
-                active &= solved;
-
-                if (active == Vector256<int>.Zero)
-                {
-                    break;
-                }
-
-                QuantizeEndpoints(ref refined);
-                Vector256<int> refinedError = MatchFourColor(r, g, b, refined, refinedIndices);
-
-                active &= Vector256.LessThan(refinedError, error);
-
-                if (active == Vector256<int>.Zero)
-                {
-                    break;
-                }
-
-                Select(active, ref endpoints, refined);
-                error = Vector256.ConditionalSelect(active, refinedError, error);
-
-                for (int i = 0; i < 16; i++)
-                {
-                    indices[i] = Vector256.ConditionalSelect(active, refinedIndices[i], indices[i]);
-                }
-            }
+            RefineCandidate(r, g, b, red, green, blue, ref endpoints, ref error, indices);
 
             if (candidate == 0)
             {
                 best = endpoints;
                 bestError = error;
                 indices.CopyTo(bestIndices);
+                continue;
             }
-            else
+
+            Vector256<int> better = Vector256.LessThan(error, bestError);
+            Select(better, ref best, endpoints);
+            bestError = Vector256.ConditionalSelect(better, error, bestError);
+
+            for (int i = 0; i < 16; i++)
             {
-                Vector256<int> better = Vector256.LessThan(error, bestError);
-                Select(better, ref best, endpoints);
-                bestError = Vector256.ConditionalSelect(better, error, bestError);
-
-                for (int i = 0; i < 16; i++)
-                {
-                    bestIndices[i] = Vector256.ConditionalSelect(better, indices[i], bestIndices[i]);
-                }
+                bestIndices[i] = Vector256.ConditionalSelect(better, indices[i], bestIndices[i]);
             }
         }
 
-        Vector256<int> retry = ClusterFit(r, g, b, bestIndices, ref best, ref bestError, BcEncoder.ClusterOrderingsPerBlock, Vector256<int>.AllBitsSet);
+        return bestError;
+    }
 
-        if (retry != Vector256<int>.Zero)
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void RefineCandidate(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+        ReadOnlySpan<Vector256<float>> red, ReadOnlySpan<Vector256<float>> green, ReadOnlySpan<Vector256<float>> blue,
+        ref Endpoints endpoints, ref Vector256<int> error, Span<Vector256<int>> indices)
+    {
+        Span<Vector256<int>> refinedIndices = stackalloc Vector256<int>[16];
+        Vector256<int> active = Vector256<int>.AllBitsSet;
+
+        for (int iteration = 0; iteration < 3; iteration++)
         {
-            ClusterFit(r, g, b, bestIndices, ref best, ref bestError, 0, retry);
+            active &= RefineFourColor(red, green, blue, indices, out Endpoints refined);
+
+            if (active == Vector256<int>.Zero)
+            {
+                return;
+            }
+
+            QuantizeEndpoints(ref refined);
+            Vector256<int> refinedError = MatchFourColor(r, g, b, refined, refinedIndices);
+            active &= Vector256.LessThan(refinedError, error);
+
+            if (active == Vector256<int>.Zero)
+            {
+                return;
+            }
+
+            Select(active, ref endpoints, refined);
+            error = Vector256.ConditionalSelect(active, refinedError, error);
+
+            for (int i = 0; i < 16; i++)
+            {
+                indices[i] = Vector256.ConditionalSelect(active, refinedIndices[i], indices[i]);
+            }
         }
+    }
 
-        SearchColorEndpoints(r, g, b, ref best, ref bestError);
-        MatchFourColor(r, g, b, best, bestIndices);
+    private static void ApplyClusterFit(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+        ReadOnlySpan<Vector256<int>> indices, ref Endpoints best, ref Vector256<int> bestError)
+    {
+        Vector256<int> improved = ClusterFit(r, g, b, indices, ref best, ref bestError, BcEncoder.ClusterOrderingsPerBlock, Vector256<int>.AllBitsSet);
 
+        if (improved != Vector256<int>.Zero)
+        {
+            ClusterFit(r, g, b, indices, ref best, ref bestError, 0, improved);
+        }
+    }
+
+    private static void PackColorBlocks(in Endpoints best, ReadOnlySpan<Vector256<int>> indices, Span<int> color0, Span<int> color1, Span<uint> masks)
+    {
         Vector256<int> c0 = Pack565(best.R0, best.G0, best.B0);
         Vector256<int> c1 = Pack565(best.R1, best.G1, best.B1);
         Vector256<int> mask = Vector256<int>.Zero;
 
         for (int i = 0; i < 16; i++)
         {
-            mask |= bestIndices[i] << (i * 2);
+            mask |= indices[i] << (i * 2);
         }
 
         Vector256<int> swap = Vector256.LessThan(c0, c1);
         Vector256<int> equal = Vector256.Equals(c0, c1);
-        Vector256<int> swapped0 = Vector256.ConditionalSelect(swap, c1, c0);
-        Vector256<int> swapped1 = Vector256.ConditionalSelect(swap, c0, c1);
         mask = Vector256.ConditionalSelect(swap, mask ^ Vector256.Create((int)BcEncoder.SwapEndpointsIndexFlip), mask);
         mask = Vector256.AndNot(mask, equal);
 
-        swapped0.CopyTo(color0);
-        swapped1.CopyTo(color1);
+        Vector256.ConditionalSelect(swap, c1, c0).CopyTo(color0);
+        Vector256.ConditionalSelect(swap, c0, c1).CopyTo(color1);
         mask.AsUInt32().CopyTo(masks);
     }
 
@@ -220,10 +239,40 @@ internal static class BcEncoderSimd
     private static Vector256<int> ClusterFit(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         ReadOnlySpan<Vector256<int>> indices, ref Endpoints best, ref Vector256<int> bestError, int orderingCount, Vector256<int> active)
     {
-        Span<Vector256<int>> keys = stackalloc Vector256<int>[16];
         Span<Vector256<int>> redGreen = stackalloc Vector256<int>[16];
         Span<Vector256<int>> blue = stackalloc Vector256<int>[16];
-        Vector256<int> axisRed = best.R1 - best.R0, axisGreen = best.G1 - best.G0, axisBlue = best.B1 - best.B0;
+        SortAlongAxis(r, g, b, best, redGreen, blue);
+
+        Vector256<int> totalRedGreen = Vector256<int>.Zero, totalBlue = Vector256<int>.Zero;
+
+        for (int i = 0; i < 16; i++)
+        {
+            totalRedGreen += redGreen[i];
+            totalBlue += blue[i];
+        }
+
+        Endpoints fit = best;
+        Vector256<int> fitError = Vector256.Create(int.MaxValue);
+
+        if (orderingCount > 0)
+        {
+            TryTableOrderings(r, g, b, indices, redGreen, blue, totalRedGreen, totalBlue, orderingCount, active, ref fit, ref fitError);
+        }
+
+        TryColorGroups(r, g, b, redGreen, blue, totalRedGreen, totalBlue, active, ref fit, ref fitError);
+
+        Vector256<int> accept = active & Vector256.LessThan(fitError, bestError);
+        Select(accept, ref best, fit);
+        bestError = Vector256.ConditionalSelect(accept, fitError, bestError);
+        return accept;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void SortAlongAxis(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b, in Endpoints axis,
+        Span<Vector256<int>> redGreen, Span<Vector256<int>> blue)
+    {
+        Span<Vector256<int>> keys = stackalloc Vector256<int>[16];
+        Vector256<int> axisRed = axis.R1 - axis.R0, axisGreen = axis.G1 - axis.G0, axisBlue = axis.B1 - axis.B0;
 
         for (int i = 0; i < 16; i++)
         {
@@ -246,54 +295,57 @@ internal static class BcEncoderSimd
             blue[first] = Vector256.ConditionalSelect(swap, x1, x0);
             blue[second] = Vector256.ConditionalSelect(swap, x0, x1);
         }
+    }
 
-        Vector256<int> totalRedGreen = Vector256<int>.Zero, totalBlue = Vector256<int>.Zero;
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void TryTableOrderings(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+        ReadOnlySpan<Vector256<int>> indices, ReadOnlySpan<Vector256<int>> redGreen, ReadOnlySpan<Vector256<int>> blue,
+        Vector256<int> totalRedGreen, Vector256<int> totalBlue, int orderingCount, Vector256<int> active, ref Endpoints fit, ref Vector256<int> fitError)
+    {
+        Span<int> plan = stackalloc int[3 * Lanes * orderingCount];
+        BuildOrderingPlan(indices, orderingCount, plan);
+
+        for (int ordering = 0; ordering < orderingCount; ordering++)
+        {
+            TrySplit(r, g, b, redGreen, blue, totalRedGreen, totalBlue, Vector256.Create<int>(plan.Slice(ordering * 3 * Lanes, Lanes)),
+                Vector256.Create<int>(plan.Slice((ordering * 3 + 1) * Lanes, Lanes)), Vector256.Create<int>(plan.Slice((ordering * 3 + 2) * Lanes, Lanes)),
+                active, ref fit, ref fitError);
+        }
+    }
+
+    private static void BuildOrderingPlan(ReadOnlySpan<Vector256<int>> indices, int orderingCount, Span<int> plan)
+    {
+        Vector256<int> countC0 = Vector256<int>.Zero, countNearC0 = Vector256<int>.Zero, countNearC1 = Vector256<int>.Zero;
 
         for (int i = 0; i < 16; i++)
         {
-            totalRedGreen += redGreen[i];
-            totalBlue += blue[i];
+            countC0 -= Vector256.Equals(indices[i], Vector256.Create(BcEncoder.IndexC0));
+            countNearC0 -= Vector256.Equals(indices[i], Vector256.Create(BcEncoder.IndexNearC0));
+            countNearC1 -= Vector256.Equals(indices[i], Vector256.Create(BcEncoder.IndexNearC1));
         }
 
-        Endpoints fit = best;
-        Vector256<int> fitError = Vector256.Create(int.MaxValue);
+        ReadOnlySpan<byte> histograms = ClusterTables.Histograms;
+        ReadOnlySpan<ushort> orderings = ClusterTables.BestOrderings;
 
-        if (orderingCount > 0)
+        for (int lane = 0; lane < Lanes; lane++)
         {
-            Vector256<int> countC0 = Vector256<int>.Zero, countNearC0 = Vector256<int>.Zero, countNearC1 = Vector256<int>.Zero;
-
-            for (int i = 0; i < 16; i++)
-            {
-                countC0 -= Vector256.Equals(indices[i], Vector256.Create(BcEncoder.IndexC0));
-                countNearC0 -= Vector256.Equals(indices[i], Vector256.Create(BcEncoder.IndexNearC0));
-                countNearC1 -= Vector256.Equals(indices[i], Vector256.Create(BcEncoder.IndexNearC1));
-            }
-
-            Span<int> plan = stackalloc int[3 * Lanes * orderingCount];
-            ReadOnlySpan<byte> histograms = ClusterTables.Histograms;
-            ReadOnlySpan<ushort> orderings = ClusterTables.BestOrderings;
-
-            for (int lane = 0; lane < Lanes; lane++)
-            {
-                int start = BcEncoder.HistogramIndex(countC0.GetElement(lane), countNearC0.GetElement(lane), countNearC1.GetElement(lane)) * ClusterTables.OrderingsPerHistogram;
-
-                for (int ordering = 0; ordering < orderingCount; ordering++)
-                {
-                    int histogramOffset = orderings[start + ordering] * 4;
-                    plan[ordering * 3 * Lanes + lane] = histograms[histogramOffset];
-                    plan[(ordering * 3 + 1) * Lanes + lane] = histograms[histogramOffset + 1];
-                    plan[(ordering * 3 + 2) * Lanes + lane] = histograms[histogramOffset + 2];
-                }
-            }
+            int start = BcEncoder.HistogramIndex(countC0.GetElement(lane), countNearC0.GetElement(lane), countNearC1.GetElement(lane)) * ClusterTables.OrderingsPerHistogram;
 
             for (int ordering = 0; ordering < orderingCount; ordering++)
             {
-                TrySplit(r, g, b, redGreen, blue, totalRedGreen, totalBlue, Vector256.Create<int>(plan.Slice(ordering * 3 * Lanes, Lanes)),
-                    Vector256.Create<int>(plan.Slice((ordering * 3 + 1) * Lanes, Lanes)), Vector256.Create<int>(plan.Slice((ordering * 3 + 2) * Lanes, Lanes)),
-                    active, ref fit, ref fitError);
+                int histogramOffset = orderings[start + ordering] * 4;
+                plan[ordering * 3 * Lanes + lane] = histograms[histogramOffset];
+                plan[(ordering * 3 + 1) * Lanes + lane] = histograms[histogramOffset + 1];
+                plan[(ordering * 3 + 2) * Lanes + lane] = histograms[histogramOffset + 2];
             }
         }
+    }
 
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void TryColorGroups(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+        ReadOnlySpan<Vector256<int>> redGreen, ReadOnlySpan<Vector256<int>> blue, Vector256<int> totalRedGreen, Vector256<int> totalBlue,
+        Vector256<int> active, ref Endpoints fit, ref Vector256<int> fitError)
+    {
         Span<Vector256<int>> groupSizes = stackalloc Vector256<int>[4];
         Vector256<int> group = Vector256<int>.Zero;
         groupSizes.Clear();
@@ -334,11 +386,6 @@ internal static class BcEncoderSimd
 
             TrySplit(r, g, b, redGreen, blue, totalRedGreen, totalBlue, countC0, countNearC0, countNearC1, valid, ref fit, ref fitError);
         }
-
-        Vector256<int> accept = active & Vector256.LessThan(fitError, bestError);
-        Select(accept, ref best, fit);
-        bestError = Vector256.ConditionalSelect(accept, fitError, bestError);
-        return accept;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
