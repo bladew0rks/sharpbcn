@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>SharpBcn</RootNamespace>
+    <PackageId>SharpBcn</PackageId>
+    <Authors>bladew0rks</Authors>
+    <Description>Fast, high quality BC1-BC5 (DXT1/DXT3/DXT5/ATI1N/ATI2N) texture block compression and decompression in pure C#, using AVX-512 or AVX2 when available.</Description>
+    <PackageTags>bcn;dxt;bc1;bc3;bc4;bc5;texture;compression;simd</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md;THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <UsingTask TaskName="GenerateWideSimd" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Source ParameterType="System.String" Required="true" />
+      <Destination ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        string text = System.IO.File.ReadAllText(Source)
+            .Replace("Vector256", "Vector512")
+            .Replace("class BcEncoderSimd", "class BcEncoderSimd512")
+            .Replace("public const int Lanes = 8;", "public const int Lanes = 16;");
+        if (!System.IO.File.Exists(Destination) || System.IO.File.ReadAllText(Destination) != text)
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Destination));
+            System.IO.File.WriteAllText(Destination, text);
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="GenerateBcEncoderSimd512" BeforeTargets="CoreCompile">
+    <GenerateWideSimd Source="$(MSBuildProjectDirectory)/BcEncoderSimd.cs" Destination="$(IntermediateOutputPath)BcEncoderSimd512.g.cs" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)BcEncoderSimd512.g.cs" />
+    </ItemGroup>
+  </Target>
+
+</Project>
