@@ -27,7 +27,8 @@ internal static class BcEncoderSimd
 
             for (int lane = 0; lane < Lanes; lane++)
             {
-                BcEncoder.GatherBlock(src, width, height, (bx + Math.Min(lane, count - 1)) * 4, by * 4, blocks.Slice(lane * 64, 64));
+                int sourceLane = Math.Min(lane, count - 1);
+                BcEncoder.GatherBlock(src, width, height, (bx + sourceLane) * 4, by * 4, blocks.Slice(lane * 64, 64));
             }
 
             Load(blocks, r, g, b, a);
@@ -207,7 +208,7 @@ internal static class BcEncoderSimd
         Vector256<int> equal = Vector256.Equals(c0, c1);
         Vector256<int> swapped0 = Vector256.ConditionalSelect(swap, c1, c0);
         Vector256<int> swapped1 = Vector256.ConditionalSelect(swap, c0, c1);
-        mask = Vector256.ConditionalSelect(swap, mask ^ Vector256.Create(0x55555555), mask);
+        mask = Vector256.ConditionalSelect(swap, mask ^ Vector256.Create((int)BcEncoder.SwapEndpointsIndexFlip), mask);
         mask = Vector256.AndNot(mask, equal);
 
         swapped0.CopyTo(color0);
@@ -226,8 +227,8 @@ internal static class BcEncoderSimd
 
         for (int i = 0; i < 16; i++)
         {
-            keys[i] = ((r[i] * axisRed + g[i] * axisGreen + b[i] * axisBlue) << 4) | Vector256.Create(i);
-            redGreen[i] = r[i] | (g[i] << 16);
+            keys[i] = PixelSortKey(r[i] * axisRed + g[i] * axisGreen + b[i] * axisBlue, i);
+            redGreen[i] = PackHalves(r[i], g[i]);
             blue[i] = b[i];
         }
 
@@ -263,9 +264,9 @@ internal static class BcEncoderSimd
 
             for (int i = 0; i < 16; i++)
             {
-                countC0 -= Vector256.Equals(indices[i], Vector256<int>.Zero);
-                countNearC0 -= Vector256.Equals(indices[i], Vector256.Create(2));
-                countNearC1 -= Vector256.Equals(indices[i], Vector256.Create(3));
+                countC0 -= Vector256.Equals(indices[i], Vector256.Create(BcEncoder.IndexC0));
+                countNearC0 -= Vector256.Equals(indices[i], Vector256.Create(BcEncoder.IndexNearC0));
+                countNearC1 -= Vector256.Equals(indices[i], Vector256.Create(BcEncoder.IndexNearC1));
             }
 
             Span<int> plan = stackalloc int[3 * Lanes * orderingCount];
@@ -369,7 +370,6 @@ internal static class BcEncoderSimd
         Vector256<int> sum9W0W1 = Vector256.Create(2) * (countNearC0 + countNearC1);
         Vector256<int> determinant = sum9W0W0 * sum9W1W1 - sum9W0W1 * sum9W0W1;
         Vector256<float> determinantFloat = Vector256.ConvertToSingle(determinant);
-        Vector256<int> lowHalf = Vector256.Create(0xFFFF);
         valid &= ~Vector256.Equals(determinant, Vector256<int>.Zero);
 
         if (valid == Vector256<int>.Zero)
@@ -378,8 +378,8 @@ internal static class BcEncoderSimd
         }
 
         Endpoints trial;
-        (trial.R0, trial.R1) = FitChannel(sumThrough0RedGreen & lowHalf, sumThrough1RedGreen & lowHalf, sumThrough2RedGreen & lowHalf, totalRedGreen & lowHalf, sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 5);
-        (trial.G0, trial.G1) = FitChannel(sumThrough0RedGreen >>> 16, sumThrough1RedGreen >>> 16, sumThrough2RedGreen >>> 16, totalRedGreen >>> 16, sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 6);
+        (trial.R0, trial.R1) = FitChannel(LowHalf(sumThrough0RedGreen), LowHalf(sumThrough1RedGreen), LowHalf(sumThrough2RedGreen), LowHalf(totalRedGreen), sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 5);
+        (trial.G0, trial.G1) = FitChannel(HighHalf(sumThrough0RedGreen), HighHalf(sumThrough1RedGreen), HighHalf(sumThrough2RedGreen), HighHalf(totalRedGreen), sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 6);
         (trial.B0, trial.B1) = FitChannel(sumThrough0Blue, sumThrough1Blue, sumThrough2Blue, totalBlue, sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 5);
         Vector256<int> error = MatchFourColorError(r, g, b, trial);
         Vector256<int> better = valid & Vector256.LessThan(error, fitError);
@@ -417,7 +417,7 @@ internal static class BcEncoderSimd
 
             for (int e = 0; e < 6; e++)
             {
-                int bits = e % 3 == 1 ? 6 : 5;
+                int bits = BcEncoder.EndpointBits(e);
                 Vector256<int> max = Vector256.Create((1 << bits) - 1);
 
                 for (int delta = -1; delta <= 1; delta += 2)
@@ -551,11 +551,13 @@ internal static class BcEncoderSimd
         for (int i = 0; i < 16; i++)
         {
             Vector256<float> dot = rf[i] * vr + gf[i] * vg + bf[i] * vb;
-            Vector256<int> lower = Vector256.LessThan(dot, minDot).AsInt32();
-            Vector256<int> higher = Vector256.GreaterThan(dot, maxDot).AsInt32();
+            Vector256<float> lowerFloat = Vector256.LessThan(dot, minDot);
+            Vector256<float> higherFloat = Vector256.GreaterThan(dot, maxDot);
+            minDot = Vector256.ConditionalSelect(lowerFloat, dot, minDot);
+            maxDot = Vector256.ConditionalSelect(higherFloat, dot, maxDot);
 
-            minDot = Vector256.ConditionalSelect(lower.AsSingle(), dot, minDot);
-            maxDot = Vector256.ConditionalSelect(higher.AsSingle(), dot, maxDot);
+            Vector256<int> lower = lowerFloat.AsInt32();
+            Vector256<int> higher = higherFloat.AsInt32();
 
             result.R0 = Vector256.ConditionalSelect(higher, r[i], result.R0);
             result.G0 = Vector256.ConditionalSelect(higher, g[i], result.G0);
@@ -605,6 +607,18 @@ internal static class BcEncoderSimd
             low = min + inset;
         }
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<int> PixelSortKey(Vector256<int> projection, int pixel) => (projection << 4) | Vector256.Create(pixel);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<int> PackHalves(Vector256<int> low, Vector256<int> high) => low | (high << 16);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<int> LowHalf(Vector256<int> packed) => packed & Vector256.Create(0xFFFF);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<int> HighHalf(Vector256<int> packed) => packed >>> 16;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector256<int> Divide255(Vector256<int> x)
@@ -670,17 +684,17 @@ internal static class BcEncoderSimd
             Vector256<int> error = Distance(r[i], g[i], b[i], e.R1, e.G1, e.B1);
             Vector256<int> lower = Vector256.LessThan(error, bestError);
             bestError = Vector256.ConditionalSelect(lower, error, bestError);
-            best = Vector256.ConditionalSelect(lower, Vector256.Create(1), best);
+            best = Vector256.ConditionalSelect(lower, Vector256.Create(BcEncoder.IndexC1), best);
 
             error = Distance(r[i], g[i], b[i], p2r, p2g, p2b);
             lower = Vector256.LessThan(error, bestError);
             bestError = Vector256.ConditionalSelect(lower, error, bestError);
-            best = Vector256.ConditionalSelect(lower, Vector256.Create(2), best);
+            best = Vector256.ConditionalSelect(lower, Vector256.Create(BcEncoder.IndexNearC0), best);
 
             error = Distance(r[i], g[i], b[i], p3r, p3g, p3b);
             lower = Vector256.LessThan(error, bestError);
             bestError = Vector256.ConditionalSelect(lower, error, bestError);
-            best = Vector256.ConditionalSelect(lower, Vector256.Create(3), best);
+            best = Vector256.ConditionalSelect(lower, Vector256.Create(BcEncoder.IndexNearC1), best);
 
             indices[i] = best;
             total += bestError;
@@ -729,9 +743,9 @@ internal static class BcEncoderSimd
         for (int i = 0; i < 16; i++)
         {
             Vector256<int> index = indices[i];
-            Vector256<float> w0 = Vector256.ConditionalSelect(Vector256.Equals(index, Vector256<int>.Zero).AsSingle(), one,
-                Vector256.ConditionalSelect(Vector256.Equals(index, Vector256.Create(2)).AsSingle(), twoThirds,
-                    Vector256.ConditionalSelect(Vector256.Equals(index, Vector256.Create(3)).AsSingle(), oneThird, Vector256<float>.Zero)));
+            Vector256<float> w0 = Vector256.ConditionalSelect(Vector256.Equals(index, Vector256.Create(BcEncoder.IndexC0)).AsSingle(), one,
+                Vector256.ConditionalSelect(Vector256.Equals(index, Vector256.Create(BcEncoder.IndexNearC0)).AsSingle(), twoThirds,
+                    Vector256.ConditionalSelect(Vector256.Equals(index, Vector256.Create(BcEncoder.IndexNearC1)).AsSingle(), oneThird, Vector256<float>.Zero)));
             Vector256<float> w1 = one - w0;
 
             sumW0W0 += w0 * w0;
@@ -1035,7 +1049,6 @@ internal static class BcEncoderSimd
         Vector256<short> p0 = Duplicate(palette[0]), p1 = Duplicate(palette[1]), p2 = Duplicate(palette[2]), p3 = Duplicate(palette[3]);
         Vector256<short> p4 = Duplicate(palette[4]), p5 = Duplicate(palette[5]), p6 = Duplicate(palette[6]), p7 = Duplicate(palette[7]);
         Vector256<int> total = Vector256<int>.Zero;
-        Vector256<int> lowHalf = Vector256.Create(0xFFFF);
 
         for (int i = 0; i < 8; i++)
         {
@@ -1045,7 +1058,7 @@ internal static class BcEncoderSimd
                 Vector256.Min(Vector256.Min(Vector256.Abs(v - p4), Vector256.Abs(v - p5)),
                 Vector256.Min(Vector256.Abs(v - p6), Vector256.Abs(v - p7))));
             Vector256<int> squares = (nearest * nearest).AsInt32();
-            total += (squares & lowHalf) + (squares >>> 16);
+            total += LowHalf(squares) + HighHalf(squares);
         }
 
         return total;
@@ -1054,7 +1067,7 @@ internal static class BcEncoderSimd
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector256<short> Duplicate(Vector256<int> value)
     {
-        return (value | (value << 16)).AsInt16();
+        return PackHalves(value, value).AsInt16();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1062,7 +1075,7 @@ internal static class BcEncoderSimd
     {
         for (int i = 0; i < 8; i++)
         {
-            pairs[i] = values[i] | (values[i + 8] << 16);
+            pairs[i] = PackHalves(values[i], values[i + 8]);
         }
     }
 

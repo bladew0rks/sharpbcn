@@ -325,6 +325,18 @@ public static class BcEncoder
 
     internal const int EndpointSearchRounds = 4;
 
+    internal const int IndexC0 = 0;
+    internal const int IndexC1 = 1;
+    internal const int IndexNearC0 = 2;
+    internal const int IndexNearC1 = 3;
+    internal const uint SwapEndpointsIndexFlip = 0x55555555;
+
+    internal static int EndpointBits(int component) => component % 3 == 1 ? 6 : 5;
+
+    internal static int PixelSortKey(int projection, int pixel) => (projection << 4) | pixel;
+
+    internal static int SortKeyPixel(int key) => key & 15;
+
     internal static readonly (int First, int Second)[] SortNetwork = BuildSortNetwork();
 
     internal const int ClusterOrderingsPerBlock = 8;
@@ -384,7 +396,7 @@ public static class BcEncoder
 
         for (int i = 0; i < 16; i++)
         {
-            keys[i] = ((colors[i * 3] * axisRed + colors[i * 3 + 1] * axisGreen + colors[i * 3 + 2] * axisBlue) << 4) | i;
+            keys[i] = PixelSortKey(colors[i * 3] * axisRed + colors[i * 3 + 1] * axisGreen + colors[i * 3 + 2] * axisBlue, i);
         }
 
         keys.Sort();
@@ -394,7 +406,7 @@ public static class BcEncoder
 
         for (int i = 0; i < 16; i++)
         {
-            int pixel = keys[i] & 15;
+            int pixel = SortKeyPixel(keys[i]);
 
             for (int c = 0; c < 3; c++)
             {
@@ -413,9 +425,9 @@ public static class BcEncoder
 
             for (int i = 0; i < 16; i++)
             {
-                countC0 += indices[i] == 0 ? 1 : 0;
-                countNearC0 += indices[i] == 2 ? 1 : 0;
-                countNearC1 += indices[i] == 3 ? 1 : 0;
+                countC0 += indices[i] == IndexC0 ? 1 : 0;
+                countNearC0 += indices[i] == IndexNearC0 ? 1 : 0;
+                countNearC1 += indices[i] == IndexNearC1 ? 1 : 0;
             }
 
             int start = HistogramIndex(countC0, countNearC0, countNearC1) * ClusterTables.OrderingsPerHistogram;
@@ -529,7 +541,7 @@ public static class BcEncoder
 
             for (int e = 0; e < 6; e++)
             {
-                int bits = e % 3 == 1 ? 6 : 5;
+                int bits = EndpointBits(e);
                 int max = (1 << bits) - 1;
 
                 for (int delta = -1; delta <= 1; delta += 2)
@@ -864,7 +876,7 @@ public static class BcEncoder
         if (c0 < c1)
         {
             (c0, c1) = (c1, c0);
-            mask ^= 0x55555555;
+            mask ^= SwapEndpointsIndexFlip;
         }
         else if (c0 == c1)
         {
