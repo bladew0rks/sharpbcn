@@ -220,15 +220,15 @@ internal static class BcEncoderSimd
         ReadOnlySpan<Vector256<int>> indices, ref Endpoints best, ref Vector256<int> bestError, int orderingCount, Vector256<int> active)
     {
         Span<Vector256<int>> keys = stackalloc Vector256<int>[16];
-        Span<Vector256<int>> rg = stackalloc Vector256<int>[16];
-        Span<Vector256<int>> bl = stackalloc Vector256<int>[16];
-        Vector256<int> dr = best.R1 - best.R0, dg = best.G1 - best.G0, db = best.B1 - best.B0;
+        Span<Vector256<int>> redGreen = stackalloc Vector256<int>[16];
+        Span<Vector256<int>> blue = stackalloc Vector256<int>[16];
+        Vector256<int> axisRed = best.R1 - best.R0, axisGreen = best.G1 - best.G0, axisBlue = best.B1 - best.B0;
 
         for (int i = 0; i < 16; i++)
         {
-            keys[i] = ((r[i] * dr + g[i] * dg + b[i] * db) << 4) | Vector256.Create(i);
-            rg[i] = r[i] | (g[i] << 16);
-            bl[i] = b[i];
+            keys[i] = ((r[i] * axisRed + g[i] * axisGreen + b[i] * axisBlue) << 4) | Vector256.Create(i);
+            redGreen[i] = r[i] | (g[i] << 16);
+            blue[i] = b[i];
         }
 
         foreach ((int first, int second) in BcEncoder.SortNetwork)
@@ -237,21 +237,21 @@ internal static class BcEncoderSimd
             Vector256<int> swap = Vector256.GreaterThan(k0, k1);
             keys[first] = Vector256.ConditionalSelect(swap, k1, k0);
             keys[second] = Vector256.ConditionalSelect(swap, k0, k1);
-            Vector256<int> x0 = rg[first], x1 = rg[second];
-            rg[first] = Vector256.ConditionalSelect(swap, x1, x0);
-            rg[second] = Vector256.ConditionalSelect(swap, x0, x1);
-            x0 = bl[first];
-            x1 = bl[second];
-            bl[first] = Vector256.ConditionalSelect(swap, x1, x0);
-            bl[second] = Vector256.ConditionalSelect(swap, x0, x1);
+            Vector256<int> x0 = redGreen[first], x1 = redGreen[second];
+            redGreen[first] = Vector256.ConditionalSelect(swap, x1, x0);
+            redGreen[second] = Vector256.ConditionalSelect(swap, x0, x1);
+            x0 = blue[first];
+            x1 = blue[second];
+            blue[first] = Vector256.ConditionalSelect(swap, x1, x0);
+            blue[second] = Vector256.ConditionalSelect(swap, x0, x1);
         }
 
-        Vector256<int> totalRg = Vector256<int>.Zero, totalB = Vector256<int>.Zero;
+        Vector256<int> totalRedGreen = Vector256<int>.Zero, totalBlue = Vector256<int>.Zero;
 
         for (int i = 0; i < 16; i++)
         {
-            totalRg += rg[i];
-            totalB += bl[i];
+            totalRedGreen += redGreen[i];
+            totalBlue += blue[i];
         }
 
         Endpoints fit = best;
@@ -259,13 +259,13 @@ internal static class BcEncoderSimd
 
         if (orderingCount > 0)
         {
-            Vector256<int> count0 = Vector256<int>.Zero, count1 = Vector256<int>.Zero, count2 = Vector256<int>.Zero;
+            Vector256<int> countC0 = Vector256<int>.Zero, countNearC0 = Vector256<int>.Zero, countNearC1 = Vector256<int>.Zero;
 
             for (int i = 0; i < 16; i++)
             {
-                count0 -= Vector256.Equals(indices[i], Vector256<int>.Zero);
-                count1 -= Vector256.Equals(indices[i], Vector256.Create(2));
-                count2 -= Vector256.Equals(indices[i], Vector256.Create(3));
+                countC0 -= Vector256.Equals(indices[i], Vector256<int>.Zero);
+                countNearC0 -= Vector256.Equals(indices[i], Vector256.Create(2));
+                countNearC1 -= Vector256.Equals(indices[i], Vector256.Create(3));
             }
 
             Span<int> plan = stackalloc int[3 * Lanes * orderingCount];
@@ -274,37 +274,37 @@ internal static class BcEncoderSimd
 
             for (int lane = 0; lane < Lanes; lane++)
             {
-                int start = BcEncoder.HistogramIndex(count0.GetElement(lane), count1.GetElement(lane), count2.GetElement(lane)) * ClusterTables.OrderingsPerHistogram;
+                int start = BcEncoder.HistogramIndex(countC0.GetElement(lane), countNearC0.GetElement(lane), countNearC1.GetElement(lane)) * ClusterTables.OrderingsPerHistogram;
 
-                for (int q = 0; q < orderingCount; q++)
+                for (int ordering = 0; ordering < orderingCount; ordering++)
                 {
-                    int split = orderings[start + q] * 4;
-                    plan[q * 3 * Lanes + lane] = histograms[split];
-                    plan[(q * 3 + 1) * Lanes + lane] = histograms[split + 1];
-                    plan[(q * 3 + 2) * Lanes + lane] = histograms[split + 2];
+                    int histogramOffset = orderings[start + ordering] * 4;
+                    plan[ordering * 3 * Lanes + lane] = histograms[histogramOffset];
+                    plan[(ordering * 3 + 1) * Lanes + lane] = histograms[histogramOffset + 1];
+                    plan[(ordering * 3 + 2) * Lanes + lane] = histograms[histogramOffset + 2];
                 }
             }
 
-            for (int q = 0; q < orderingCount; q++)
+            for (int ordering = 0; ordering < orderingCount; ordering++)
             {
-                TrySplit(r, g, b, rg, bl, totalRg, totalB, Vector256.Create<int>(plan.Slice(q * 3 * Lanes, Lanes)),
-                    Vector256.Create<int>(plan.Slice((q * 3 + 1) * Lanes, Lanes)), Vector256.Create<int>(plan.Slice((q * 3 + 2) * Lanes, Lanes)),
+                TrySplit(r, g, b, redGreen, blue, totalRedGreen, totalBlue, Vector256.Create<int>(plan.Slice(ordering * 3 * Lanes, Lanes)),
+                    Vector256.Create<int>(plan.Slice((ordering * 3 + 1) * Lanes, Lanes)), Vector256.Create<int>(plan.Slice((ordering * 3 + 2) * Lanes, Lanes)),
                     active, ref fit, ref fitError);
             }
         }
 
-        Span<Vector256<int>> sizes = stackalloc Vector256<int>[4];
+        Span<Vector256<int>> groupSizes = stackalloc Vector256<int>[4];
         Vector256<int> group = Vector256<int>.Zero;
-        sizes.Clear();
-        sizes[0] = Vector256<int>.AllBitsSet;
+        groupSizes.Clear();
+        groupSizes[0] = Vector256<int>.AllBitsSet;
 
         for (int i = 1; i < 16; i++)
         {
-            group -= ~(Vector256.Equals(rg[i], rg[i - 1]) & Vector256.Equals(bl[i], bl[i - 1]));
+            group -= ~(Vector256.Equals(redGreen[i], redGreen[i - 1]) & Vector256.Equals(blue[i], blue[i - 1]));
 
             for (int j = 0; j < 4; j++)
             {
-                sizes[j] += Vector256.Equals(group, Vector256.Create(j));
+                groupSizes[j] += Vector256.Equals(group, Vector256.Create(j));
             }
         }
 
@@ -319,19 +319,19 @@ internal static class BcEncoderSimd
                 continue;
             }
 
-            Vector256<int> h0 = Vector256<int>.Zero, h1 = Vector256<int>.Zero, h2 = Vector256<int>.Zero;
+            Vector256<int> countC0 = Vector256<int>.Zero, countNearC0 = Vector256<int>.Zero, countNearC1 = Vector256<int>.Zero;
 
             for (int j = 0; j < pattern.Length; j++)
             {
                 switch (pattern[j])
                 {
-                    case 0: h0 -= sizes[j]; break;
-                    case 1: h1 -= sizes[j]; break;
-                    case 2: h2 -= sizes[j]; break;
+                    case 0: countC0 -= groupSizes[j]; break;
+                    case 1: countNearC0 -= groupSizes[j]; break;
+                    case 2: countNearC1 -= groupSizes[j]; break;
                 }
             }
 
-            TrySplit(r, g, b, rg, bl, totalRg, totalB, h0, h1, h2, valid, ref fit, ref fitError);
+            TrySplit(r, g, b, redGreen, blue, totalRedGreen, totalBlue, countC0, countNearC0, countNearC1, valid, ref fit, ref fitError);
         }
 
         Vector256<int> accept = active & Vector256.LessThan(fitError, bestError);
@@ -342,35 +342,35 @@ internal static class BcEncoderSimd
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void TrySplit(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
-        ReadOnlySpan<Vector256<int>> rg, ReadOnlySpan<Vector256<int>> bl, Vector256<int> totalRg, Vector256<int> totalB,
-        Vector256<int> h0, Vector256<int> h1, Vector256<int> h2, Vector256<int> valid, ref Endpoints fit, ref Vector256<int> fitError)
+        ReadOnlySpan<Vector256<int>> redGreen, ReadOnlySpan<Vector256<int>> blue, Vector256<int> totalRedGreen, Vector256<int> totalBlue,
+        Vector256<int> countC0, Vector256<int> countNearC0, Vector256<int> countNearC1, Vector256<int> valid, ref Endpoints fit, ref Vector256<int> fitError)
     {
-        Vector256<int> h3 = Vector256.Create(16) - h0 - h1 - h2;
-        Vector256<int> f1 = h0, f2 = h0 + h1, f3 = f2 + h2;
-        Vector256<int> p1Rg = Vector256<int>.Zero, p2Rg = Vector256<int>.Zero, p3Rg = Vector256<int>.Zero;
-        Vector256<int> p1B = Vector256<int>.Zero, p2B = Vector256<int>.Zero, p3B = Vector256<int>.Zero;
+        Vector256<int> countC1 = Vector256.Create(16) - countC0 - countNearC0 - countNearC1;
+        Vector256<int> end0 = countC0, end1 = countC0 + countNearC0, end2 = end1 + countNearC1;
+        Vector256<int> sumThrough0RedGreen = Vector256<int>.Zero, sumThrough1RedGreen = Vector256<int>.Zero, sumThrough2RedGreen = Vector256<int>.Zero;
+        Vector256<int> sumThrough0Blue = Vector256<int>.Zero, sumThrough1Blue = Vector256<int>.Zero, sumThrough2Blue = Vector256<int>.Zero;
 
         for (int i = 0; i < 16; i++)
         {
             Vector256<int> position = Vector256.Create(i);
-            Vector256<int> in1 = Vector256.GreaterThan(f1, position);
-            Vector256<int> in2 = Vector256.GreaterThan(f2, position);
-            Vector256<int> in3 = Vector256.GreaterThan(f3, position);
-            p1Rg += rg[i] & in1;
-            p2Rg += rg[i] & in2;
-            p3Rg += rg[i] & in3;
-            p1B += bl[i] & in1;
-            p2B += bl[i] & in2;
-            p3B += bl[i] & in3;
+            Vector256<int> beforeEnd0 = Vector256.GreaterThan(end0, position);
+            Vector256<int> beforeEnd1 = Vector256.GreaterThan(end1, position);
+            Vector256<int> beforeEnd2 = Vector256.GreaterThan(end2, position);
+            sumThrough0RedGreen += redGreen[i] & beforeEnd0;
+            sumThrough1RedGreen += redGreen[i] & beforeEnd1;
+            sumThrough2RedGreen += redGreen[i] & beforeEnd2;
+            sumThrough0Blue += blue[i] & beforeEnd0;
+            sumThrough1Blue += blue[i] & beforeEnd1;
+            sumThrough2Blue += blue[i] & beforeEnd2;
         }
 
-        Vector256<int> a2 = Vector256.Create(9) * h0 + Vector256.Create(4) * h1 + h2;
-        Vector256<int> b2 = h1 + Vector256.Create(4) * h2 + Vector256.Create(9) * h3;
-        Vector256<int> ab = Vector256.Create(2) * (h1 + h2);
-        Vector256<int> detInt = a2 * b2 - ab * ab;
-        Vector256<float> det = Vector256.ConvertToSingle(detInt);
-        Vector256<int> low = Vector256.Create(0xFFFF);
-        valid &= ~Vector256.Equals(detInt, Vector256<int>.Zero);
+        Vector256<int> sum9W0W0 = Vector256.Create(9) * countC0 + Vector256.Create(4) * countNearC0 + countNearC1;
+        Vector256<int> sum9W1W1 = countNearC0 + Vector256.Create(4) * countNearC1 + Vector256.Create(9) * countC1;
+        Vector256<int> sum9W0W1 = Vector256.Create(2) * (countNearC0 + countNearC1);
+        Vector256<int> determinant = sum9W0W0 * sum9W1W1 - sum9W0W1 * sum9W0W1;
+        Vector256<float> determinantFloat = Vector256.ConvertToSingle(determinant);
+        Vector256<int> lowHalf = Vector256.Create(0xFFFF);
+        valid &= ~Vector256.Equals(determinant, Vector256<int>.Zero);
 
         if (valid == Vector256<int>.Zero)
         {
@@ -378,9 +378,9 @@ internal static class BcEncoderSimd
         }
 
         Endpoints trial;
-        (trial.R0, trial.R1) = FitChannel(p1Rg & low, p2Rg & low, p3Rg & low, totalRg & low, a2, b2, ab, det, 5);
-        (trial.G0, trial.G1) = FitChannel(p1Rg >>> 16, p2Rg >>> 16, p3Rg >>> 16, totalRg >>> 16, a2, b2, ab, det, 6);
-        (trial.B0, trial.B1) = FitChannel(p1B, p2B, p3B, totalB, a2, b2, ab, det, 5);
+        (trial.R0, trial.R1) = FitChannel(sumThrough0RedGreen & lowHalf, sumThrough1RedGreen & lowHalf, sumThrough2RedGreen & lowHalf, totalRedGreen & lowHalf, sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 5);
+        (trial.G0, trial.G1) = FitChannel(sumThrough0RedGreen >>> 16, sumThrough1RedGreen >>> 16, sumThrough2RedGreen >>> 16, totalRedGreen >>> 16, sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 6);
+        (trial.B0, trial.B1) = FitChannel(sumThrough0Blue, sumThrough1Blue, sumThrough2Blue, totalBlue, sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 5);
         Vector256<int> error = MatchFourColorError(r, g, b, trial);
         Vector256<int> better = valid & Vector256.LessThan(error, fitError);
 
@@ -394,16 +394,16 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static (Vector256<int>, Vector256<int>) FitChannel(Vector256<int> p1, Vector256<int> p2, Vector256<int> p3, Vector256<int> total,
-        Vector256<int> a2, Vector256<int> b2, Vector256<int> ab, Vector256<float> det, int bits)
+    private static (Vector256<int>, Vector256<int>) FitChannel(Vector256<int> sumThrough0, Vector256<int> sumThrough1, Vector256<int> sumThrough2, Vector256<int> total,
+        Vector256<int> sum9W0W0, Vector256<int> sum9W1W1, Vector256<int> sum9W0W1, Vector256<float> determinant, int bits)
     {
         Vector256<int> two = Vector256.Create(2), three = Vector256.Create(3);
-        Vector256<int> ax = three * p1 + two * (p2 - p1) + (p3 - p2);
-        Vector256<int> bx = (p2 - p1) + two * (p3 - p2) + three * (total - p3);
-        Vector256<float> n0 = Vector256.ConvertToSingle(three * (ax * b2 - bx * ab));
-        Vector256<float> n1 = Vector256.ConvertToSingle(three * (bx * a2 - ax * ab));
-        Vector256<int> c0 = Clamp255(Vector256.ConvertToInt32(Vector256.Round(n0 / det)));
-        Vector256<int> c1 = Clamp255(Vector256.ConvertToInt32(Vector256.Round(n1 / det)));
+        Vector256<int> sum3W0X = three * sumThrough0 + two * (sumThrough1 - sumThrough0) + (sumThrough2 - sumThrough1);
+        Vector256<int> sum3W1X = (sumThrough1 - sumThrough0) + two * (sumThrough2 - sumThrough1) + three * (total - sumThrough2);
+        Vector256<float> numerator0 = Vector256.ConvertToSingle(three * (sum3W0X * sum9W1W1 - sum3W1X * sum9W0W1));
+        Vector256<float> numerator1 = Vector256.ConvertToSingle(three * (sum3W1X * sum9W0W0 - sum3W0X * sum9W0W1));
+        Vector256<int> c0 = Clamp255(Vector256.ConvertToInt32(Vector256.Round(numerator0 / determinant)));
+        Vector256<int> c1 = Clamp255(Vector256.ConvertToInt32(Vector256.Round(numerator1 / determinant)));
         return bits == 6 ? (Expand6(Quantize(c0, 6)), Expand6(Quantize(c1, 6))) : (Expand5(Quantize(c0, 5)), Expand5(Quantize(c1, 5)));
     }
 
@@ -717,44 +717,44 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<int> RefineFourColor(ReadOnlySpan<Vector256<float>> rf, ReadOnlySpan<Vector256<float>> gf, ReadOnlySpan<Vector256<float>> bf,
+    private static Vector256<int> RefineFourColor(ReadOnlySpan<Vector256<float>> red, ReadOnlySpan<Vector256<float>> green, ReadOnlySpan<Vector256<float>> blue,
         ReadOnlySpan<Vector256<int>> indices, out Endpoints result)
     {
         Vector256<float> one = Vector256.Create(1f);
         Vector256<float> twoThirds = Vector256.Create(2f / 3f);
         Vector256<float> oneThird = Vector256.Create(1f / 3f);
-        Vector256<float> aa = default, bb = default, ab = default;
-        Vector256<float> ar = default, ag = default, ab2 = default, br = default, bg = default, bb2 = default;
+        Vector256<float> sumW0W0 = default, sumW1W1 = default, sumW0W1 = default;
+        Vector256<float> sumW0Red = default, sumW0Green = default, sumW0Blue = default, sumW1Red = default, sumW1Green = default, sumW1Blue = default;
 
         for (int i = 0; i < 16; i++)
         {
             Vector256<int> index = indices[i];
-            Vector256<float> a = Vector256.ConditionalSelect(Vector256.Equals(index, Vector256<int>.Zero).AsSingle(), one,
+            Vector256<float> w0 = Vector256.ConditionalSelect(Vector256.Equals(index, Vector256<int>.Zero).AsSingle(), one,
                 Vector256.ConditionalSelect(Vector256.Equals(index, Vector256.Create(2)).AsSingle(), twoThirds,
                     Vector256.ConditionalSelect(Vector256.Equals(index, Vector256.Create(3)).AsSingle(), oneThird, Vector256<float>.Zero)));
-            Vector256<float> b = one - a;
+            Vector256<float> w1 = one - w0;
 
-            aa += a * a;
-            bb += b * b;
-            ab += a * b;
-            ar += a * rf[i];
-            ag += a * gf[i];
-            ab2 += a * bf[i];
-            br += b * rf[i];
-            bg += b * gf[i];
-            bb2 += b * bf[i];
+            sumW0W0 += w0 * w0;
+            sumW1W1 += w1 * w1;
+            sumW0W1 += w0 * w1;
+            sumW0Red += w0 * red[i];
+            sumW0Green += w0 * green[i];
+            sumW0Blue += w0 * blue[i];
+            sumW1Red += w1 * red[i];
+            sumW1Green += w1 * green[i];
+            sumW1Blue += w1 * blue[i];
         }
 
-        Vector256<float> det = aa * bb - ab * ab;
-        Vector256<int> solvable = Vector256.GreaterThanOrEqual(Vector256.Abs(det), Vector256.Create(1e-6f)).AsInt32();
-        Vector256<float> inv = one / det;
+        Vector256<float> determinant = sumW0W0 * sumW1W1 - sumW0W1 * sumW0W1;
+        Vector256<int> solvable = Vector256.GreaterThanOrEqual(Vector256.Abs(determinant), Vector256.Create(1e-6f)).AsInt32();
+        Vector256<float> inverse = one / determinant;
 
-        result.R0 = RoundToInt((ar * bb - br * ab) * inv);
-        result.G0 = RoundToInt((ag * bb - bg * ab) * inv);
-        result.B0 = RoundToInt((ab2 * bb - bb2 * ab) * inv);
-        result.R1 = RoundToInt((br * aa - ar * ab) * inv);
-        result.G1 = RoundToInt((bg * aa - ag * ab) * inv);
-        result.B1 = RoundToInt((bb2 * aa - ab2 * ab) * inv);
+        result.R0 = RoundToInt((sumW0Red * sumW1W1 - sumW1Red * sumW0W1) * inverse);
+        result.G0 = RoundToInt((sumW0Green * sumW1W1 - sumW1Green * sumW0W1) * inverse);
+        result.B0 = RoundToInt((sumW0Blue * sumW1W1 - sumW1Blue * sumW0W1) * inverse);
+        result.R1 = RoundToInt((sumW1Red * sumW0W0 - sumW0Red * sumW0W1) * inverse);
+        result.G1 = RoundToInt((sumW1Green * sumW0W0 - sumW0Green * sumW0W1) * inverse);
+        result.B1 = RoundToInt((sumW1Blue * sumW0W0 - sumW0Blue * sumW0W1) * inverse);
         return solvable;
     }
 
@@ -1035,7 +1035,7 @@ internal static class BcEncoderSimd
         Vector256<short> p0 = Duplicate(palette[0]), p1 = Duplicate(palette[1]), p2 = Duplicate(palette[2]), p3 = Duplicate(palette[3]);
         Vector256<short> p4 = Duplicate(palette[4]), p5 = Duplicate(palette[5]), p6 = Duplicate(palette[6]), p7 = Duplicate(palette[7]);
         Vector256<int> total = Vector256<int>.Zero;
-        Vector256<int> low = Vector256.Create(0xFFFF);
+        Vector256<int> lowHalf = Vector256.Create(0xFFFF);
 
         for (int i = 0; i < 8; i++)
         {
@@ -1045,7 +1045,7 @@ internal static class BcEncoderSimd
                 Vector256.Min(Vector256.Min(Vector256.Abs(v - p4), Vector256.Abs(v - p5)),
                 Vector256.Min(Vector256.Abs(v - p6), Vector256.Abs(v - p7))));
             Vector256<int> squares = (nearest * nearest).AsInt32();
-            total += (squares & low) + (squares >>> 16);
+            total += (squares & lowHalf) + (squares >>> 16);
         }
 
         return total;

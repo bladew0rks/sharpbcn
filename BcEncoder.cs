@@ -380,11 +380,11 @@ public static class BcEncoder
     private static bool ClusterFit(ReadOnlySpan<int> colors, ReadOnlySpan<byte> indices, Span<int> endpoints, ref long error, int orderingCount)
     {
         Span<int> keys = stackalloc int[16];
-        int dr = endpoints[3] - endpoints[0], dg = endpoints[4] - endpoints[1], db = endpoints[5] - endpoints[2];
+        int axisRed = endpoints[3] - endpoints[0], axisGreen = endpoints[4] - endpoints[1], axisBlue = endpoints[5] - endpoints[2];
 
         for (int i = 0; i < 16; i++)
         {
-            keys[i] = ((colors[i * 3] * dr + colors[i * 3 + 1] * dg + colors[i * 3 + 2] * db) << 4) | i;
+            keys[i] = ((colors[i * 3] * axisRed + colors[i * 3 + 1] * axisGreen + colors[i * 3 + 2] * axisBlue) << 4) | i;
         }
 
         keys.Sort();
@@ -409,29 +409,29 @@ public static class BcEncoder
 
         if (orderingCount > 0)
         {
-            int count0 = 0, count1 = 0, count2 = 0;
+            int countC0 = 0, countNearC0 = 0, countNearC1 = 0;
 
             for (int i = 0; i < 16; i++)
             {
-                count0 += indices[i] == 0 ? 1 : 0;
-                count1 += indices[i] == 2 ? 1 : 0;
-                count2 += indices[i] == 3 ? 1 : 0;
+                countC0 += indices[i] == 0 ? 1 : 0;
+                countNearC0 += indices[i] == 2 ? 1 : 0;
+                countNearC1 += indices[i] == 3 ? 1 : 0;
             }
 
-            int start = HistogramIndex(count0, count1, count2) * ClusterTables.OrderingsPerHistogram;
+            int start = HistogramIndex(countC0, countNearC0, countNearC1) * ClusterTables.OrderingsPerHistogram;
             ReadOnlySpan<byte> histograms = ClusterTables.Histograms;
 
-            for (int q = 0; q < orderingCount; q++)
+            for (int ordering = 0; ordering < orderingCount; ordering++)
             {
-                int split = ClusterTables.BestOrderings[start + q] * 4;
-                TrySplit(colors, sorted, totals, histograms[split], histograms[split + 1], histograms[split + 2], fit, ref fitError);
+                int histogramOffset = ClusterTables.BestOrderings[start + ordering] * 4;
+                TrySplit(colors, sorted, totals, histograms[histogramOffset], histograms[histogramOffset + 1], histograms[histogramOffset + 2], fit, ref fitError);
             }
         }
 
-        Span<int> sizes = stackalloc int[4];
+        Span<int> groupSizes = stackalloc int[4];
         int group = 0;
-        sizes.Clear();
-        sizes[0] = 1;
+        groupSizes.Clear();
+        groupSizes[0] = 1;
 
         for (int i = 1; i < 16; i++)
         {
@@ -442,12 +442,12 @@ public static class BcEncoder
 
             if (group < 4)
             {
-                sizes[group]++;
+                groupSizes[group]++;
             }
         }
 
         int distinct = group + 1;
-        Span<int> h = stackalloc int[4];
+        Span<int> counts = stackalloc int[4];
 
         foreach (int[] pattern in GroupPatterns)
         {
@@ -456,14 +456,14 @@ public static class BcEncoder
                 continue;
             }
 
-            h.Clear();
+            counts.Clear();
 
             for (int j = 0; j < pattern.Length; j++)
             {
-                h[pattern[j]] += sizes[j];
+                counts[pattern[j]] += groupSizes[j];
             }
 
-            TrySplit(colors, sorted, totals, h[0], h[1], h[2], fit, ref fitError);
+            TrySplit(colors, sorted, totals, counts[0], counts[1], counts[2], fit, ref fitError);
         }
 
         if (fitError >= error)
@@ -476,14 +476,14 @@ public static class BcEncoder
         return true;
     }
 
-    private static void TrySplit(ReadOnlySpan<int> colors, ReadOnlySpan<int> sorted, ReadOnlySpan<int> totals, int h0, int h1, int h2,
+    private static void TrySplit(ReadOnlySpan<int> colors, ReadOnlySpan<int> sorted, ReadOnlySpan<int> totals, int countC0, int countNearC0, int countNearC1,
         Span<int> fit, ref long fitError)
     {
-        int h3 = 16 - h0 - h1 - h2;
-        int a2 = 9 * h0 + 4 * h1 + h2, b2 = h1 + 4 * h2 + 9 * h3, ab = 2 * (h1 + h2);
-        int det = a2 * b2 - ab * ab;
+        int countC1 = 16 - countC0 - countNearC0 - countNearC1;
+        int sum9W0W0 = 9 * countC0 + 4 * countNearC0 + countNearC1, sum9W1W1 = countNearC0 + 4 * countNearC1 + 9 * countC1, sum9W0W1 = 2 * (countNearC0 + countNearC1);
+        int determinant = sum9W0W0 * sum9W1W1 - sum9W0W1 * sum9W0W1;
 
-        if (det == 0)
+        if (determinant == 0)
         {
             return;
         }
@@ -492,20 +492,20 @@ public static class BcEncoder
 
         for (int c = 0; c < 3; c++)
         {
-            int p1 = 0, p2 = 0, p3 = 0;
+            int sumThrough0 = 0, sumThrough1 = 0, sumThrough2 = 0;
 
             for (int i = 0; i < 16; i++)
             {
                 int value = sorted[i * 3 + c];
-                p1 += i < h0 ? value : 0;
-                p2 += i < h0 + h1 ? value : 0;
-                p3 += i < h0 + h1 + h2 ? value : 0;
+                sumThrough0 += i < countC0 ? value : 0;
+                sumThrough1 += i < countC0 + countNearC0 ? value : 0;
+                sumThrough2 += i < countC0 + countNearC0 + countNearC1 ? value : 0;
             }
 
-            int ax = 3 * p1 + 2 * (p2 - p1) + (p3 - p2);
-            int bx = (p2 - p1) + 2 * (p3 - p2) + 3 * (totals[c] - p3);
-            int c0 = Math.Clamp((int)MathF.Round((float)(3 * (ax * b2 - bx * ab)) / det), 0, 255);
-            int c1 = Math.Clamp((int)MathF.Round((float)(3 * (bx * a2 - ax * ab)) / det), 0, 255);
+            int sum3W0X = 3 * sumThrough0 + 2 * (sumThrough1 - sumThrough0) + (sumThrough2 - sumThrough1);
+            int sum3W1X = (sumThrough1 - sumThrough0) + 2 * (sumThrough2 - sumThrough1) + 3 * (totals[c] - sumThrough2);
+            int c0 = Math.Clamp((int)MathF.Round((float)(3 * (sum3W0X * sum9W1W1 - sum3W1X * sum9W0W1)) / determinant), 0, 255);
+            int c1 = Math.Clamp((int)MathF.Round((float)(3 * (sum3W1X * sum9W0W0 - sum3W0X * sum9W0W1)) / determinant), 0, 255);
             trial[c] = c == 1 ? Expand6(Quantize(c0, 6)) : Expand5(Quantize(c0, 5));
             trial[3 + c] = c == 1 ? Expand6(Quantize(c1, 6)) : Expand5(Quantize(c1, 5));
         }
@@ -815,38 +815,38 @@ public static class BcEncoder
     private static bool RefineFourColor(ReadOnlySpan<int> colors, ReadOnlySpan<byte> indices, Span<int> endpoints)
     {
         ReadOnlySpan<float> weights = [1f, 0f, 2f / 3f, 1f / 3f];
-        float aa = 0, bb = 0, ab = 0;
-        float ar = 0, ag = 0, ab2 = 0, br = 0, bg = 0, bb2 = 0;
+        float sumW0W0 = 0, sumW1W1 = 0, sumW0W1 = 0;
+        float sumW0Red = 0, sumW0Green = 0, sumW0Blue = 0, sumW1Red = 0, sumW1Green = 0, sumW1Blue = 0;
 
         for (int i = 0; i < 16; i++)
         {
-            float a = weights[indices[i]];
-            float b = 1f - a;
-            aa += a * a;
-            bb += b * b;
-            ab += a * b;
-            ar += a * colors[i * 3];
-            ag += a * colors[i * 3 + 1];
-            ab2 += a * colors[i * 3 + 2];
-            br += b * colors[i * 3];
-            bg += b * colors[i * 3 + 1];
-            bb2 += b * colors[i * 3 + 2];
+            float w0 = weights[indices[i]];
+            float w1 = 1f - w0;
+            sumW0W0 += w0 * w0;
+            sumW1W1 += w1 * w1;
+            sumW0W1 += w0 * w1;
+            sumW0Red += w0 * colors[i * 3];
+            sumW0Green += w0 * colors[i * 3 + 1];
+            sumW0Blue += w0 * colors[i * 3 + 2];
+            sumW1Red += w1 * colors[i * 3];
+            sumW1Green += w1 * colors[i * 3 + 1];
+            sumW1Blue += w1 * colors[i * 3 + 2];
         }
 
-        float det = aa * bb - ab * ab;
+        float determinant = sumW0W0 * sumW1W1 - sumW0W1 * sumW0W1;
 
-        if (MathF.Abs(det) < 1e-6f)
+        if (MathF.Abs(determinant) < 1e-6f)
         {
             return false;
         }
 
-        float inv = 1f / det;
-        endpoints[0] = (int)MathF.Round((ar * bb - br * ab) * inv);
-        endpoints[1] = (int)MathF.Round((ag * bb - bg * ab) * inv);
-        endpoints[2] = (int)MathF.Round((ab2 * bb - bb2 * ab) * inv);
-        endpoints[3] = (int)MathF.Round((br * aa - ar * ab) * inv);
-        endpoints[4] = (int)MathF.Round((bg * aa - ag * ab) * inv);
-        endpoints[5] = (int)MathF.Round((bb2 * aa - ab2 * ab) * inv);
+        float inverse = 1f / determinant;
+        endpoints[0] = (int)MathF.Round((sumW0Red * sumW1W1 - sumW1Red * sumW0W1) * inverse);
+        endpoints[1] = (int)MathF.Round((sumW0Green * sumW1W1 - sumW1Green * sumW0W1) * inverse);
+        endpoints[2] = (int)MathF.Round((sumW0Blue * sumW1W1 - sumW1Blue * sumW0W1) * inverse);
+        endpoints[3] = (int)MathF.Round((sumW1Red * sumW0W0 - sumW0Red * sumW0W1) * inverse);
+        endpoints[4] = (int)MathF.Round((sumW1Green * sumW0W0 - sumW0Green * sumW0W1) * inverse);
+        endpoints[5] = (int)MathF.Round((sumW1Blue * sumW0W0 - sumW0Blue * sumW0W1) * inverse);
         return true;
     }
 
