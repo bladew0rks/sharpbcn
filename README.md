@@ -4,7 +4,6 @@ Fast, high quality BC1–BC5 texture compression for .NET, written in plain C#.
 
 - Formats: BC1 (DXT1, with optional 1-bit alpha), BC2 (DXT3), BC3 (DXT5), BC4 (ATI1N), BC5 (ATI2N)
 - Encodes 16 blocks at once with AVX-512, 8 with AVX2, and falls back to scalar code on other CPUs.
-  All three paths produce byte-identical output.
 - Multithreaded by default.
 - No native dependencies.
 
@@ -25,29 +24,30 @@ BcEncoder.Encode(BcFormat.Bc1, rgba, width, height, output.AsSpan(offset));
 `BcFormat.Bc1Alpha` treats pixels with alpha below `alphaThreshold` (default 128) as transparent.
 Pass `parallel: false` to encode on the calling thread only.
 
-## How it works
-
-Color blocks are fit from three starting candidates (principal axis, inset bounding box and an extended
-principal axis), refined with least squares, then improved with cluster fit and a local endpoint search.
-Blocks with four or fewer distinct colors try every ordered placement of those colors, so textures that
-were already DXT-compressed once can usually be re-encoded without loss.
-
-Alpha and single-channel blocks try both the 8-value and the 6-value (with fixed 0 and 255) modes, then a
-coarse-to-fine search over endpoint pairs.
-
-All error math is integer and scored against the exact palette a decoder produces.
-
 ## Performance
 
-DXT5, 219 textures (623 megapixels), Ryzen 7 9800X3D, all cores, measured with SSIMULACRA 2
-(higher is better):
+Inputs are CC0 textures, downloaded as 4K PNGs:
 
-| Encoder | Encode time | Color, fresh textures | Color, re-encoded DXT | Alpha |
+- [Leaf001](https://ambientcg.com/view?id=Leaf001) (ambientCG): Color, NormalDX, AmbientOcclusion, Opacity, Roughness
+- [MetalPlates006](https://ambientcg.com/view?id=MetalPlates006) (ambientCG): Color, NormalDX, Metalness, Roughness
+- [rusty_metal_02](https://polyhaven.com/a/rusty_metal_02) (Poly Haven): diff, nor_dx
+
+BC1 is measured on the six color and normal maps (Leaf001's alpha removed), BC4 on the five single-channel maps.
+Time is wall clock for the whole set including PNG loading, on a Ryzen 7 9800X3D using all 16 threads.
+Quality is [SSIMULACRA 2](https://github.com/cloudinary/ssimulacra2) between the source and the decoded result,
+averaged over the maps (higher is better).
+
+| Encoder | BC1 time | BC1 quality | BC4 time | BC4 quality |
 |---|---|---|---|---|
-| SharpBcn | 1.9 s | 84.07 | 94.67 | 94.7 |
-| rgbcx, level 18 | ~51 s | 84.54 | 94.79 | 92.4 |
-| Compressonator, quality 1.0 | ~18 s | 78.07 | 88.28 | 94.6 |
-| ISPC TexComp | 0.16 s | 78.22 | 80.55 | 90.5 |
+| SharpBcn | 0.80 s | 83.18 | 0.34 s | 89.30 |
+| rgbcx (bc7enc_rdo), level 18 | 9.54 s | 83.70 | 2.74 s | 88.50 |
+| rgbcx (bc7enc_rdo), level 10 | 3.78 s | 82.93 | | |
+| Compressonator 4.5.52, quality 1.0 | 2.92 s | 81.12 | 0.77 s | 89.21 |
+| ISPC Texture Compressor | 0.36 s | 77.84 | 0.21 s | 88.06 |
+
+Settings: `bc7enc -1 -L18`, `bc7enc -1 -L10` and `bc7enc -4`; `compressonatorcli -fd BC1|BC4 -Quality 1.0 -nomipmap`;
+ISPC Texture Compressor built with AVX-512 and called from 16 threads. Excluding PNG loading, SharpBcn spends
+0.27 s encoding BC1 and 0.06 s encoding BC4.
 
 ## License
 
