@@ -31,9 +31,10 @@ Test textures, all 4K PNGs:
 - [MetalPlates006](https://ambientcg.com/view?id=MetalPlates006) (ambientCG): color, normal, metalness, roughness
 - [rusty_metal_02](https://polyhaven.com/a/rusty_metal_02) (Poly Haven): color, normal
 
-How it's measured:
+Measurements:
 
-- BC1 runs on the six color and normal maps, with Leaf001's alpha dropped; BC4 runs on the five grayscale maps
+- BC1 runs on the six color and normal maps, with Leaf001's alpha dropped
+- BC4 runs on the five grayscale maps
 - Time covers the whole set, PNG loading included, on a Ryzen 7 9800X3D using all 16 threads
 - Quality is the [SSIMULACRA 2](https://github.com/cloudinary/ssimulacra2) score against the source, averaged over the maps, so higher is better
 
@@ -48,13 +49,14 @@ How it's measured:
 | stb_dxt, high quality | 0.32 s | 80.70 | 0.18 s | 87.91 |
 | ISPC Texture Compressor | 0.36 s | 77.84 | 0.21 s | 88.06 |
 
-What the other encoders ran with:
+Settings used with each encoder:
 
 - rgbcx: `bc7enc -1 -L18`, `bc7enc -1 -L10` and `bc7enc -4`
 - Compressonator: `compressonatorcli -fd BC1` or `-fd BC4`, plus `-Quality 1.0 -nomipmap`
 - [icbc](https://github.com/castano/icbc): D3D10 decoder, equal color weights, 3-color mode and 3-color black turned on
 - [stb_dxt](https://github.com/nothings/stb/blob/master/stb_dxt.h): `STB_DXT_HIGHQUAL`
-- icbc, stb_dxt and the ISPC Texture Compressor were built with AVX-512 and run on 16 threads; icbc and stb_dxt read the PNGs through stb_image
+- icbc, stb_dxt and the ISPC Texture Compressor were built with AVX-512 and run on 16 threads
+- icbc and stb_dxt read the PNGs through stb_image
 
 ## License
 
