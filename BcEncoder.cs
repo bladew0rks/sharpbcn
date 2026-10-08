@@ -255,9 +255,17 @@ public static class BcEncoder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static void GatherBlock(ReadOnlySpan<byte> src, int width, int height, int x0, int y0, Span<byte> block)
     {
+        bool fullRow = x0 + 4 <= width;
+
         for (int y = 0; y < 4; y++)
         {
             int sy = Math.Min(y0 + y, height - 1);
+
+            if (fullRow)
+            {
+                src.Slice((sy * width + x0) * 4, 16).CopyTo(block.Slice(y * 16, 16));
+                continue;
+            }
 
             for (int x = 0; x < 4; x++)
             {

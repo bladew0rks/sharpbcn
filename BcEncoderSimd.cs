@@ -38,13 +38,21 @@ internal static class BcEncoderSimd
         {
             int count = Math.Min(Lanes, blocksX - bx);
 
-            for (int lane = 0; lane < Lanes; lane++)
+            if (kind is BcEncoder.BlockKind.Bc4 or BcEncoder.BlockKind.Bc5 && count == Lanes && (bx + Lanes) * 4 <= width && by * 4 + 4 <= height)
             {
-                int sourceLane = Math.Min(lane, count - 1);
-                BcEncoder.GatherBlock(src, width, height, (bx + sourceLane) * 4, by * 4, blocks.Slice(lane * 64, 64));
+                LoadDirect(src, width, bx * 4, by * 4, r, g, b, a);
+            }
+            else
+            {
+                for (int lane = 0; lane < Lanes; lane++)
+                {
+                    int sourceLane = Math.Min(lane, count - 1);
+                    BcEncoder.GatherBlock(src, width, height, (bx + sourceLane) * 4, by * 4, blocks.Slice(lane * 64, 64));
+                }
+
+                Load(blocks, r, g, b, a);
             }
 
-            Load(blocks, r, g, b, a);
             Span<byte> dest = row[(bx * blockSize)..];
 
             switch (kind)
@@ -108,6 +116,34 @@ internal static class BcEncoderSimd
         }
 
         return any.ExtractMostSignificantBits();
+    }
+
+    private static void LoadDirect(ReadOnlySpan<byte> src, int width, int x0, int y0, Span<Vector256<int>> r, Span<Vector256<int>> g, Span<Vector256<int>> b,
+        Span<Vector256<int>> a)
+    {
+        ReadOnlySpan<uint> pixels = MemoryMarshal.Cast<byte, uint>(src);
+        Span<uint> lane = stackalloc uint[Lanes];
+        Vector256<int> mask = Vector256.Create(0xFF);
+
+        for (int y = 0; y < 4; y++)
+        {
+            ReadOnlySpan<uint> sourceRow = pixels.Slice((y0 + y) * width + x0, Lanes * 4);
+
+            for (int x = 0; x < 4; x++)
+            {
+                for (int l = 0; l < Lanes; l++)
+                {
+                    lane[l] = sourceRow[l * 4 + x];
+                }
+
+                Vector256<int> p = Vector256.Create<uint>(lane).AsInt32();
+                int i = y * 4 + x;
+                r[i] = p & mask;
+                g[i] = (p >>> 8) & mask;
+                b[i] = (p >>> 16) & mask;
+                a[i] = p >>> 24;
+            }
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
