@@ -252,8 +252,15 @@ public static class BcRdo
 
                         current.CopyTo(trial);
                         new ReadOnlySpan<byte>(previous + ofs, length).CopyTo(trial[ofs..]);
-                        T.Unpack(trial[..size], decoded);
-                        float mse = Error(source, decoded, weights) * inverseTotal;
+                        int limit = ErrorLimit(Math.Min(threshold, (bestCost - bitsCost) / scale), inverseTotal);
+                        int sum = TrialError<T>(trial[..size], source, decoded, weights, limit);
+
+                        if (sum > limit)
+                        {
+                            continue;
+                        }
+
+                        float mse = sum * inverseTotal;
 
                         if (mse >= threshold)
                         {
@@ -310,8 +317,15 @@ public static class BcRdo
 
                             single[..size].CopyTo(trial);
                             new ReadOnlySpan<byte>(previous + ofs, length).CopyTo(trial[ofs..]);
-                            T.Unpack(trial[..size], decoded);
-                            float mse = Error(source, decoded, weights) * inverseTotal;
+                            int limit = ErrorLimit(Math.Min(threshold, (bestCost - bitsLambda) / scale), inverseTotal);
+                            int sum = TrialError<T>(trial[..size], source, decoded, weights, limit);
+
+                            if (sum > limit)
+                            {
+                                continue;
+                            }
+
+                            float mse = sum * inverseTotal;
 
                             if (mse >= threshold)
                             {
@@ -342,6 +356,25 @@ public static class BcRdo
                 favorContinue = endOffset == stride ? (useFirst ? bestSource + bestLength : secondSource + secondLength) : -1;
             }
         }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int TrialError<T>(ReadOnlySpan<byte> block, ReadOnlySpan<byte> source, Span<byte> decoded, int[] weights, int limit)
+        where T : struct, IUnpacker
+    {
+        if (typeof(T) == typeof(Bc7Unpacker))
+        {
+            return BcDecoder.Bc7BlockError(block, source, limit);
+        }
+
+        T.Unpack(block, decoded);
+        return Error(source, decoded, weights);
+    }
+
+    private static int ErrorLimit(float maxMse, float inverseTotal)
+    {
+        float limit = maxMse / inverseTotal;
+        return limit >= int.MaxValue / 2 ? int.MaxValue / 2 : (int)limit + 1;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

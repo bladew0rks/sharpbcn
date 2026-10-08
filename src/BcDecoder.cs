@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace SharpBcn;
@@ -444,11 +445,66 @@ public static class BcDecoder
         new(2, 6, 0, 0, 5, 5, 1, 0, 2, 0),
     ];
 
+    private interface IBc7Mode
+    {
+        static abstract int Number { get; }
+        static abstract Bc7ModeInfo Info { get; }
+    }
+
+    private struct Bc7Mode0 : IBc7Mode
+    {
+        public static int Number => 0;
+        public static Bc7ModeInfo Info => new(3, 4, 0, 0, 4, 0, 1, 0, 3, 0);
+    }
+
+    private struct Bc7Mode1 : IBc7Mode
+    {
+        public static int Number => 1;
+        public static Bc7ModeInfo Info => new(2, 6, 0, 0, 6, 0, 0, 1, 3, 0);
+    }
+
+    private struct Bc7Mode2 : IBc7Mode
+    {
+        public static int Number => 2;
+        public static Bc7ModeInfo Info => new(3, 6, 0, 0, 5, 0, 0, 0, 2, 0);
+    }
+
+    private struct Bc7Mode3 : IBc7Mode
+    {
+        public static int Number => 3;
+        public static Bc7ModeInfo Info => new(2, 6, 0, 0, 7, 0, 1, 0, 2, 0);
+    }
+
+    private struct Bc7Mode4 : IBc7Mode
+    {
+        public static int Number => 4;
+        public static Bc7ModeInfo Info => new(1, 0, 2, 1, 5, 6, 0, 0, 2, 3);
+    }
+
+    private struct Bc7Mode5 : IBc7Mode
+    {
+        public static int Number => 5;
+        public static Bc7ModeInfo Info => new(1, 0, 2, 0, 7, 8, 0, 0, 2, 2);
+    }
+
+    private struct Bc7Mode6 : IBc7Mode
+    {
+        public static int Number => 6;
+        public static Bc7ModeInfo Info => new(1, 0, 0, 0, 7, 7, 1, 0, 4, 0);
+    }
+
+    private struct Bc7Mode7 : IBc7Mode
+    {
+        public static int Number => 7;
+        public static Bc7ModeInfo Info => new(2, 6, 0, 0, 5, 5, 1, 0, 2, 0);
+    }
+
     private struct BitReader(ReadOnlySpan<byte> block)
     {
         private ulong low = BinaryPrimitives.ReadUInt64LittleEndian(block);
         private ulong high = BinaryPrimitives.ReadUInt64LittleEndian(block[8..]);
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public int Read(int count)
         {
             if (count == 0)
@@ -493,22 +549,85 @@ public static class BcDecoder
 
     public static void DecodeBc7Block(ReadOnlySpan<byte> block, Span<byte> pixels)
     {
-        int mode = System.Numerics.BitOperations.TrailingZeroCount(block[0] | 0x100);
-
-        if (mode == 8)
+        switch (System.Numerics.BitOperations.TrailingZeroCount(block[0] | 0x100))
         {
-            pixels[..64].Clear();
-            return;
+            case 0: DecodeBc7Block<Bc7Mode0>(block, pixels); break;
+            case 1: DecodeBc7Block<Bc7Mode1>(block, pixels); break;
+            case 2: DecodeBc7Block<Bc7Mode2>(block, pixels); break;
+            case 3: DecodeBc7Block<Bc7Mode3>(block, pixels); break;
+            case 4: DecodeBc7Block<Bc7Mode4>(block, pixels); break;
+            case 5: DecodeBc7Block<Bc7Mode5>(block, pixels); break;
+            case 6: DecodeBc7Block<Bc7Mode6>(block, pixels); break;
+            case 7: DecodeBc7Block<Bc7Mode7>(block, pixels); break;
+            default: pixels[..64].Clear(); break;
+        }
+    }
+
+    internal static int Bc7BlockError(ReadOnlySpan<byte> block, ReadOnlySpan<byte> source, int limit)
+    {
+        switch (System.Numerics.BitOperations.TrailingZeroCount(block[0] | 0x100))
+        {
+            case 0: return Bc7BlockError<Bc7Mode0>(block, source, limit);
+            case 1: return Bc7BlockError<Bc7Mode1>(block, source, limit);
+            case 2: return Bc7BlockError<Bc7Mode2>(block, source, limit);
+            case 3: return Bc7BlockError<Bc7Mode3>(block, source, limit);
+            case 4: return Bc7BlockError<Bc7Mode4>(block, source, limit);
+            case 5: return Bc7BlockError<Bc7Mode5>(block, source, limit);
+            case 6: return Bc7BlockError<Bc7Mode6>(block, source, limit);
+            case 7: return Bc7BlockError<Bc7Mode7>(block, source, limit);
         }
 
-        ref readonly Bc7ModeInfo info = ref Bc7Modes[mode];
+        int sum = 0;
+
+        for (int i = 0; i < 64; i++)
+        {
+            sum += source[i] * source[i];
+        }
+
+        return sum;
+    }
+
+    private static void DecodeBc7Block<TMode>(ReadOnlySpan<byte> block, Span<byte> pixels) where TMode : IBc7Mode =>
+        DecodeBc7<TMode, Bc7Pixels>(block, pixels, default, 0);
+
+    private static int Bc7BlockError<TMode>(ReadOnlySpan<byte> block, ReadOnlySpan<byte> source, int limit) where TMode : IBc7Mode =>
+        DecodeBc7<TMode, Bc7Error>(block, default, source, limit);
+
+    private interface IBc7Output
+    {
+        static abstract bool Measure { get; }
+    }
+
+    private struct Bc7Pixels : IBc7Output
+    {
+        public static bool Measure => false;
+    }
+
+    private struct Bc7Error : IBc7Output
+    {
+        public static bool Measure => true;
+    }
+
+    [InlineArray(24)]
+    private struct Bc7Endpoints
+    {
+        private int value;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static int DecodeBc7<TMode, TOutput>(ReadOnlySpan<byte> block, Span<byte> pixels, ReadOnlySpan<byte> source, int limit)
+        where TMode : IBc7Mode
+        where TOutput : IBc7Output
+    {
+        Bc7ModeInfo info = TMode.Info;
         BitReader bits = new BitReader(block);
-        bits.Read(mode + 1);
+        bits.Read(TMode.Number + 1);
         int partition = bits.Read(info.PartitionBits);
         int rotation = bits.Read(info.RotationBits);
         int indexSelection = bits.Read(info.IndexSelectionBits);
 
-        Span<int> endpoints = stackalloc int[3 * 2 * 4];
+        Bc7Endpoints endpointBuffer = default;
+        Span<int> endpoints = endpointBuffer;
 
         for (int channel = 0; channel < 4; channel++)
         {
@@ -522,18 +641,18 @@ public static class BcDecoder
 
         if (info.EndpointPBits != 0 || info.SharedPBits != 0)
         {
-            Span<int> pBits = stackalloc int[6];
+            int pBit = 0;
 
             for (int e = 0; e < info.Subsets * 2; e++)
             {
-                pBits[e] = info.EndpointPBits != 0 ? bits.Read(1) : (e % 2 == 0 ? bits.Read(1) : pBits[e - 1]);
-            }
+                if (info.EndpointPBits != 0 || e % 2 == 0)
+                {
+                    pBit = bits.Read(1);
+                }
 
-            for (int e = 0; e < info.Subsets * 2; e++)
-            {
                 for (int channel = 0; channel < (info.AlphaBits != 0 ? 4 : 3); channel++)
                 {
-                    endpoints[e * 4 + channel] = (endpoints[e * 4 + channel] << 1) | pBits[e];
+                    endpoints[e * 4 + channel] = (endpoints[e * 4 + channel] << 1) | pBit;
                 }
             }
         }
@@ -568,46 +687,67 @@ public static class BcDecoder
         };
 
         int anchor2 = info.Subsets == 3 ? Bc7Tables.AnchorThirdSubsetSecond[partition] : -1;
-        Span<byte> primary = stackalloc byte[16];
-        Span<byte> secondary = stackalloc byte[16];
-
-        for (int i = 0; i < 16; i++)
-        {
-            primary[i] = (byte)bits.Read(info.IndexBits - (i == 0 || i == anchor1 || i == anchor2 ? 1 : 0));
-        }
+        BitReader secondaryBits = bits;
 
         if (info.SecondaryIndexBits != 0)
         {
-            for (int i = 0; i < 16; i++)
-            {
-                secondary[i] = (byte)bits.Read(info.SecondaryIndexBits - (i == 0 ? 1 : 0));
-            }
+            secondaryBits.Read(16 * info.IndexBits - 1);
         }
 
         bool alphaFromSecondary = info.SecondaryIndexBits != 0 && indexSelection == 0;
         bool colorFromSecondary = info.SecondaryIndexBits != 0 && indexSelection != 0;
-        ReadOnlySpan<byte> colorIndices = colorFromSecondary ? secondary : primary;
-        ReadOnlySpan<byte> alphaIndices = alphaFromSecondary ? secondary : primary;
         ReadOnlySpan<byte> colorWeights = Bc7Weights(colorFromSecondary ? info.SecondaryIndexBits : info.IndexBits);
         ReadOnlySpan<byte> alphaWeights = Bc7Weights(alphaFromSecondary ? info.SecondaryIndexBits : info.IndexBits);
-        bool oneSubset = info.Subsets == 1;
+        int sum = 0;
 
         for (int i = 0; i < 16; i++)
         {
-            int e0 = oneSubset ? 0 : subsets[i] * 8;
-            int wc = colorWeights[colorIndices[i]];
-            int wa = alphaWeights[alphaIndices[i]];
-            Span<byte> pixel = pixels.Slice(i * 4, 4);
-            pixel[0] = (byte)(((64 - wc) * endpoints[e0] + wc * endpoints[e0 + 4] + 32) >> 6);
-            pixel[1] = (byte)(((64 - wc) * endpoints[e0 + 1] + wc * endpoints[e0 + 5] + 32) >> 6);
-            pixel[2] = (byte)(((64 - wc) * endpoints[e0 + 2] + wc * endpoints[e0 + 6] + 32) >> 6);
-            pixel[3] = (byte)(((64 - wa) * endpoints[e0 + 3] + wa * endpoints[e0 + 7] + 32) >> 6);
+            int primary = bits.Read(info.IndexBits - (i == 0 || i == anchor1 || i == anchor2 ? 1 : 0));
+            int secondary = info.SecondaryIndexBits != 0 ? secondaryBits.Read(info.SecondaryIndexBits - (i == 0 ? 1 : 0)) : primary;
+            int e0 = info.Subsets == 1 ? 0 : subsets[i] * 8;
+            int wc = colorWeights[colorFromSecondary ? secondary : primary];
+            int wa = alphaWeights[alphaFromSecondary ? secondary : primary];
+            int r = ((64 - wc) * endpoints[e0] + wc * endpoints[e0 + 4] + 32) >> 6;
+            int g = ((64 - wc) * endpoints[e0 + 1] + wc * endpoints[e0 + 5] + 32) >> 6;
+            int b = ((64 - wc) * endpoints[e0 + 2] + wc * endpoints[e0 + 6] + 32) >> 6;
+            int a = ((64 - wa) * endpoints[e0 + 3] + wa * endpoints[e0 + 7] + 32) >> 6;
 
-            if (rotation != 0)
+            if (rotation == 1)
             {
-                (pixel[rotation - 1], pixel[3]) = (pixel[3], pixel[rotation - 1]);
+                (r, a) = (a, r);
+            }
+            else if (rotation == 2)
+            {
+                (g, a) = (a, g);
+            }
+            else if (rotation == 3)
+            {
+                (b, a) = (a, b);
+            }
+
+            if (TOutput.Measure)
+            {
+                int dr = source[i * 4] - r;
+                int dg = source[i * 4 + 1] - g;
+                int db = source[i * 4 + 2] - b;
+                int da = source[i * 4 + 3] - a;
+                sum += dr * dr + dg * dg + db * db + da * da;
+
+                if (sum > limit)
+                {
+                    return sum;
+                }
+            }
+            else
+            {
+                pixels[i * 4] = (byte)r;
+                pixels[i * 4 + 1] = (byte)g;
+                pixels[i * 4 + 2] = (byte)b;
+                pixels[i * 4 + 3] = (byte)a;
             }
         }
+
+        return sum;
     }
 
     private static ReadOnlySpan<byte> Bc7Weights(int bits) => bits switch

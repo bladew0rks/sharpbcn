@@ -44,10 +44,10 @@ Higher `lambda` means smaller files and lower quality, around 0.1 to 4 is useful
 | Lambda | PSNR | Compressed size | RDO time |
 |---|---|---|---|
 | 0 | 59.18 dB | 1661 KiB | |
-| 0.1 | 51.38 dB | 1103 KiB | 1.41 s |
-| 0.5 | 47.32 dB | 811 KiB | 0.99 s |
-| 1 | 45.73 dB | 740 KiB | 0.88 s |
-| 4 | 43.03 dB | 588 KiB | 0.66 s |
+| 0.1 | 51.38 dB | 1103 KiB | 0.59 s |
+| 0.5 | 47.32 dB | 811 KiB | 0.46 s |
+| 1 | 45.73 dB | 740 KiB | 0.45 s |
+| 4 | 43.03 dB | 588 KiB | 0.37 s |
 
 Normal maps lose more per lambda (40.68 dB at 0.5 on the matching normal map), so use a lower value for them.
 
