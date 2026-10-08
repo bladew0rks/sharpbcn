@@ -1,10 +1,10 @@
 # Third-party notices
 
-`ClusterTables.cs` contains the total-ordering tables (`g_unique_total_orders4` and the 32-entry
+`src/ClusterTables.cs` contains the total-ordering tables (`g_unique_total_orders4` and the 32-entry
 `g_best_total_orderings4`) from rgbcx, part of [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo),
 used under its MIT license.
 
-`Bc7Tables.cs` contains the BC7 partition, anchor and weight tables from bc7decomp, also part of
+`src/Bc7Tables.cs` contains the BC7 partition, anchor and weight tables from bc7decomp, also part of
 bc7enc_rdo, used under the same MIT license:
 
 ```
@@ -29,7 +29,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-`Bc6hTables.cs` contains the BC6H header bit layouts (`ms_aDesc`) from
+`src/Bc6hTables.cs` contains the BC6H header bit layouts (`ms_aDesc`) from
 [DirectXTex](https://github.com/microsoft/DirectXTex), used under its MIT license:
 
 ```
