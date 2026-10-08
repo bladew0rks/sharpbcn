@@ -115,10 +115,7 @@ FAMILIES = [
     ('bc7enc', '#4263EB'),
 ]
 
-THEMES = {
-    'light': {'text': '#24292F', 'muted': '#57606A', 'grid': '#D0D7DE', 'front': '#8C959F'},
-    'dark': {'text': '#E6EDF3', 'muted': '#9198A1', 'grid': '#30363D', 'front': '#6E7681'},
-}
+THEME = {'background': '#161B22', 'text': '#E6EDF3', 'muted': '#9198A1', 'grid': '#30363D', 'front': '#6E7681'}
 
 OFFSETS = {
     ('BC1', 'Textures', 'BCnEncoder.NET balanced'): (-7, 12, 'right'),
@@ -227,8 +224,11 @@ def speed_chart(path, theme):
 
 
 def save(figure, path):
+    for axis in figure.axes:
+        axis.set_facecolor(THEME['background'])
+
     figure.tight_layout()
-    figure.savefig(path, transparent=True)
+    figure.savefig(path, facecolor=THEME['background'])
     plt.close(figure)
 
 
@@ -248,13 +248,10 @@ def main():
     folder = os.path.dirname(os.path.abspath(__file__))
     extension = sys.argv[1] if len(sys.argv) > 1 else 'svg'
 
-    for name, theme in THEMES.items():
-        suffix = '' if name == 'light' else '-dark'
+    for fmt in ('BC1', 'BC4', 'BC7', 'BC6H'):
+        scatter_chart(os.path.join(folder, f'{fmt.lower()}.{extension}'), fmt, THEME)
 
-        for fmt in ('BC1', 'BC4', 'BC7', 'BC6H'):
-            scatter_chart(os.path.join(folder, f'{fmt.lower()}{suffix}.{extension}'), fmt, theme)
-
-        speed_chart(os.path.join(folder, f'bcnencoder{suffix}.{extension}'), theme)
+    speed_chart(os.path.join(folder, f'bcnencoder.{extension}'), THEME)
 
 
 if __name__ == '__main__':

@@ -67,10 +67,7 @@ Measurements:
 The other pure .NET encoder, at its best quality, except BC7 on the textures and CLIC, which use its fast setting because best quality takes too long there.
 Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/bcnencoder-dark.svg">
-  <img alt="Encode time of SharpBcn and BCnEncoder.NET per format" src="docs/bcnencoder.svg">
-</picture>
+<img alt="Encode time of SharpBcn and BCnEncoder.NET per format" src="docs/bcnencoder.svg">
 
 <details>
 <summary>Numbers</summary>
@@ -91,10 +88,7 @@ Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
 
 ### BC1
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/bc1-dark.svg">
-  <img alt="BC1 encode time against SSIMULACRA 2" src="docs/bc1.svg">
-</picture>
+<img alt="BC1 encode time against SSIMULACRA 2" src="docs/bc1.svg">
 
 <details>
 <summary>Numbers</summary>
@@ -117,10 +111,7 @@ Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
 
 ### BC4
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/bc4-dark.svg">
-  <img alt="BC4 encode time against SSIMULACRA 2" src="docs/bc4.svg">
-</picture>
+<img alt="BC4 encode time against SSIMULACRA 2" src="docs/bc4.svg">
 
 <details>
 <summary>Numbers</summary>
@@ -139,10 +130,7 @@ Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
 
 ### BC7
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/bc7-dark.svg">
-  <img alt="BC7 encode time against SSIMULACRA 2" src="docs/bc7.svg">
-</picture>
+<img alt="BC7 encode time against SSIMULACRA 2" src="docs/bc7.svg">
 
 <details>
 <summary>Numbers</summary>
@@ -193,10 +181,7 @@ Measurements:
 - mPSNR is the PSNR of 8-bit tonemapped images (gamma 2.2), averaged over exposures from -4 to +4 stops
 - SSIMULACRA 2 is averaged over the same tonemapped images at -4, -2, 0, +2 and +4 stops
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/bc6h-dark.svg">
-  <img alt="BC6H encode time against SSIMULACRA 2" src="docs/bc6h.svg">
-</picture>
+<img alt="BC6H encode time against SSIMULACRA 2" src="docs/bc6h.svg">
 
 <details>
 <summary>Numbers</summary>
