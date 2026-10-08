@@ -8,8 +8,8 @@
     <RootNamespace>SharpBcn</RootNamespace>
     <PackageId>SharpBcn</PackageId>
     <Authors>bladew0rks</Authors>
-    <Description>Fast, high quality BC1-BC5 (DXT1/DXT3/DXT5/ATI1N/ATI2N) texture block compression and decompression in pure C#, using AVX-512 or AVX2 when available.</Description>
-    <PackageTags>bcn;dxt;bc1;bc3;bc4;bc5;texture;compression;simd</PackageTags>
+    <Description>Fast, high quality BC1-BC7 (DXT1/DXT3/DXT5/ATI1N/ATI2N/BC6H/BC7) texture block compression and decompression in pure C#, using AVX-512 or AVX2 when available.</Description>
+    <PackageTags>bcn;dxt;bc1;bc3;bc4;bc5;bc6h;bc7;bptc;hdr;texture;compression;simd</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
