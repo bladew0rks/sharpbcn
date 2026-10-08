@@ -73,6 +73,9 @@ Measurements:
 | Compressonator 4.5.52, quality 1.0 | 3.15 s | 81.12 | 79.39 | 4.36 s | 80.31 |
 | stb_dxt, high quality | 0.35 s | 80.70 | 79.55 | 0.26 s | 80.00 |
 | ISPC Texture Compressor | 0.42 s | 77.84 | 77.55 | 0.24 s | 77.25 |
+| BCnEncoder.NET 2.3.0, best quality | 8.39 s | 82.51 | 80.36 | 9.07 s | 82.28 |
+| BCnEncoder.NET 2.3.0, balanced | 9.48 s | 75.40 | 80.53 | 9.48 s | 81.87 |
+| BCnEncoder.NET 2.3.0, fast | 2.79 s | 69.50 | 67.89 | 2.90 s | 71.93 |
 
 ### BC4
 
@@ -83,6 +86,8 @@ Measurements:
 | rgbcx (bc7enc_rdo) | 2.74 s | 88.50 |
 | ISPC Texture Compressor | 0.21 s | 88.06 |
 | stb_dxt, high quality | 0.18 s | 87.91 |
+| BCnEncoder.NET 2.3.0, best quality | 2.43 s | 89.18 |
+| BCnEncoder.NET 2.3.0, fast | 1.80 s | 89.19 |
 
 ### BC7
 
@@ -98,6 +103,9 @@ Measurements:
 | Compressonator 4.5.52, quality 0.05 | 95.03 s | 89.41 | 92.16 | 193.65 s | 91.42 |
 | Compressonator 4.5.52, quality 0.2 | | | 92.57 | 426.31 s | 91.66 |
 | Compressonator 4.5.52, quality 0.5 | | | 92.68 | | |
+| BCnEncoder.NET 2.3.0, best quality | | | 92.70 | | |
+| BCnEncoder.NET 2.3.0, balanced | | | 92.45 | | |
+| BCnEncoder.NET 2.3.0, fast | 112.44 s | 89.42 | 92.27 | 116.57 s | 91.50 |
 
 On Leaf001's alpha channel SharpBcn reaches 64.9 dB PSNR, against 56.3 to 57.8 dB for bc7e and the ISPC Texture Compressor.
 
@@ -110,6 +118,7 @@ Settings used with each encoder:
 - [icbc](https://github.com/castano/icbc): D3D10 decoder, equal color weights, 3-color mode and 3-color black turned on
 - [stb_dxt](https://github.com/nothings/stb/blob/master/stb_dxt.h): `STB_DXT_HIGHQUAL`
 - ISPC Texture Compressor: the default BC1 and BC4 encoders, and the `slow`, `basic` and `veryfast` BC7 profiles, using the `alpha_` variants for Leaf001's color map
+- [BCnEncoder.NET](https://github.com/Nominom/BCnEncoder.NET): `Quality` set to `BestQuality`, `Balanced` or `Fast`, no mipmaps, parallel with 16 tasks
 - icbc, stb_dxt and the ISPC Texture Compressor were built with AVX-512 and run on 16 threads
 - icbc and stb_dxt read the PNGs through stb_image
 
@@ -120,7 +129,7 @@ The signed rows use the same images multiplied by a cosine wave, so every block 
 
 Measurements:
 
-- Time is encoding only for SharpBcn and the ISPC Texture Compressor, since the inputs are already half floats
+- Time is encoding only for SharpBcn, the ISPC Texture Compressor and BCnEncoder.NET, since the inputs are already half floats
 - Compressonator's time is the whole command line run, from half float DDS files
 - Half PSNR compares the half float bit patterns, which works out to roughly a log-space error
 - mPSNR is the PSNR of 8-bit tonemapped images (gamma 2.2), averaged over exposures from -4 to +4 stops
@@ -136,11 +145,16 @@ Measurements:
 | ISPC Texture Compressor, veryfast | 0.01 s | 58.71 dB | 47.96 dB | 88.50 |
 | Compressonator 4.5.52, quality 1.0 | 159.78 s | 60.14 dB | 49.18 dB | 90.01 |
 | Compressonator 4.5.52, quality 0.05 | 7.39 s | 60.14 dB | 49.18 dB | 90.03 |
+| BCnEncoder.NET 2.3.0, best quality | 13.17 s | 58.54 dB | 48.10 dB | 89.08 |
+| BCnEncoder.NET 2.3.0, balanced | 1.17 s | 57.57 dB | 47.04 dB | 87.32 |
+| BCnEncoder.NET 2.3.0, fast | 0.21 s | 57.34 dB | 46.91 dB | 87.58 |
 | SharpBcn, signed | 0.12 s | 53.03 dB | 46.96 dB | 89.41 |
 | Compressonator 4.5.52, signed, quality 1.0 | 122.91 s | 52.52 dB | 46.58 dB | 84.32 |
 | Compressonator 4.5.52, signed, quality 0.05 | 7.74 s | 52.52 dB | 46.55 dB | 84.06 |
+| BCnEncoder.NET 2.3.0, signed, best quality | 12.95 s | 46.17 dB | 45.37 dB | 87.57 |
+| BCnEncoder.NET 2.3.0, signed, balanced | 1.13 s | 45.64 dB | 44.39 dB | 85.53 |
 
-The ISPC Texture Compressor only does unsigned BC6H.
+The ISPC Texture Compressor only does unsigned BC6H. BCnEncoder.NET's signed BC6H at `Fast` produced unusable output (0.35 dB half PSNR), so it's left out.
 
 ## License
 
