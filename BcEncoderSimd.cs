@@ -1195,6 +1195,7 @@ internal static class BcEncoderSimd
     #region BC6H
 
     private const float MaxHalfMagnitude = 0x7BFF;
+    private const float TwoRegionErrorThreshold = 4000;
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void EncodeBc6hRow(ReadOnlySpan<byte> src, int width, int height, int by, int blocksX, Span<byte> row, bool signed)
@@ -1205,6 +1206,12 @@ internal static class BcEncoderSimd
         Span<byte> candidate = stackalloc byte[16 * Lanes];
         Span<Vector256<float>> pixels = stackalloc Vector256<float>[48];
         Span<Vector256<float>> ones = stackalloc Vector256<float>[16];
+        Span<Vector256<int>> shapes = stackalloc Vector256<int>[2];
+        Span<Vector256<float>> oneRegionEndpoints = stackalloc Vector256<float>[6];
+        Span<Vector256<float>> twoRegionEndpoints = stackalloc Vector256<float>[12];
+        Span<Vector256<float>> regionWeights = stackalloc Vector256<float>[2 * 16];
+        Span<Vector256<int>> anchors = stackalloc Vector256<int>[2];
+        float minimum = signed ? -MaxHalfMagnitude : 0;
         ones.Fill(Vector256.Create(1f));
 
         for (int bx = 0; bx < blocksX; bx += Lanes)
@@ -1229,9 +1236,25 @@ internal static class BcEncoderSimd
             LoadHalfPlanes(blocks, pixels, signed);
             Vector256<float> bestError = Vector256.Create(float.MaxValue);
 
+            FitPrincipalAxis(pixels, ones, 3, oneRegionEndpoints, minimum, MaxHalfMagnitude);
+
             for (int mode = 10; mode < 14; mode++)
             {
-                Keep(EncodeBc6hMode(pixels, ones, mode, signed, candidate), Vector256<float>.AllBitsSet, ref bestError, candidate, encoded);
+                Keep(EncodeBc6hMode(pixels, ones, oneRegionEndpoints, mode, signed, candidate), Vector256<float>.AllBitsSet, ref bestError, candidate, encoded);
+            }
+
+            Vector256<float> needsRegions = Vector256.GreaterThan(bestError, Vector256.Create(TwoRegionErrorThreshold));
+
+            if (needsRegions != Vector256<float>.Zero)
+            {
+                EstimatePartitions(pixels, 3, 2, 32, shapes);
+                PrepareRegions(pixels, shapes[1], minimum, regionWeights, anchors, twoRegionEndpoints);
+
+                for (int mode = 0; mode < 10; mode++)
+                {
+                    Keep(EncodeBc6hTwoRegionMode(pixels, regionWeights, anchors, twoRegionEndpoints, mode, shapes[1], signed, candidate), needsRegions,
+                        ref bestError, candidate, encoded);
+                }
             }
 
             encoded[..(count * 16)].CopyTo(row[(bx * 16)..]);
@@ -1260,7 +1283,8 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<float> EncodeBc6hMode(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, int mode, bool signed, Span<byte> output)
+    private static Vector256<float> EncodeBc6hMode(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, ReadOnlySpan<Vector256<float>> initialEndpoints,
+        int mode, bool signed, Span<byte> output)
     {
         BcDecoder.Bc6hModeInfo info = BcDecoder.Bc6hModes[mode];
         float minimum = signed ? -MaxHalfMagnitude : 0;
@@ -1270,8 +1294,7 @@ internal static class BcEncoderSimd
         Span<Vector256<int>> indices = stackalloc Vector256<int>[16];
         Span<Vector256<int>> bestIndices = stackalloc Vector256<int>[16];
         Vector256<float> bestError = Vector256.Create(float.MaxValue);
-
-        FitPrincipalAxis(pixels, weights, 3, endpoints, minimum, MaxHalfMagnitude);
+        initialEndpoints.CopyTo(endpoints);
 
         for (int iteration = 0; ; iteration++)
         {
@@ -1287,7 +1310,7 @@ internal static class BcEncoderSimd
                 }
             }
 
-            Vector256<float> error = MatchBc6hIndices(pixels, weights, codes, info, signed, indices);
+            Vector256<float> error = MatchBc6hIndices(pixels, weights, codes, info, signed, Vector256.Create(-1), indices);
             Vector256<int> better = Vector256.LessThan(error, bestError).AsInt32();
             bestError = Vector256.Min(error, bestError);
 
@@ -1420,7 +1443,7 @@ internal static class BcEncoderSimd
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static Vector256<float> MatchBc6hIndices(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, ReadOnlySpan<Vector256<int>> codes,
-        BcDecoder.Bc6hModeInfo info, bool signed, Span<Vector256<int>> indices)
+        BcDecoder.Bc6hModeInfo info, bool signed, Vector256<int> anchor, Span<Vector256<int>> indices)
     {
         int count = 1 << info.IndexBits;
         Span<Vector256<float>> palette = stackalloc Vector256<float>[16 * 3];
@@ -1448,6 +1471,7 @@ internal static class BcEncoderSimd
         {
             Vector256<float> best = Vector256.Create(float.MaxValue);
             Vector256<int> bestIndex = Vector256<int>.Zero;
+            Vector256<float> isAnchor = Vector256.Equals(anchor, Vector256.Create(i)).AsSingle();
 
             for (int k = 0; k < count; k++)
             {
@@ -1455,6 +1479,12 @@ internal static class BcEncoderSimd
                 Vector256<float> dg = pixels[16 + i] - palette[k * 3 + 1];
                 Vector256<float> db = pixels[32 + i] - palette[k * 3 + 2];
                 Vector256<float> error = dr * dr + dg * dg + db * db;
+
+                if (k >= count / 2)
+                {
+                    error = Vector256.ConditionalSelect(isAnchor, Vector256.Create(float.MaxValue), error);
+                }
+
                 Vector256<int> better = Vector256.LessThan(error, best).AsInt32();
                 best = Vector256.Min(error, best);
                 bestIndex = Vector256.ConditionalSelect(better, Vector256.Create(k), bestIndex);
@@ -1465,6 +1495,159 @@ internal static class BcEncoderSimd
         }
 
         return total;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void PrepareRegions(ReadOnlySpan<Vector256<float>> pixels, Vector256<int> shape, float minimum, Span<Vector256<float>> weights,
+        Span<Vector256<int>> anchors, Span<Vector256<float>> endpoints)
+    {
+        Span<int> shapeOf = stackalloc int[Lanes];
+        Span<int> lanes = stackalloc int[Lanes];
+        shape.CopyTo(shapeOf);
+
+        for (int i = 0; i < 16; i++)
+        {
+            for (int lane = 0; lane < Lanes; lane++)
+            {
+                lanes[lane] = BcDecoder.Bc7Subset(2, shapeOf[lane], i);
+            }
+
+            Vector256<float> second = Vector256.ConvertToSingle(Vector256.Create<int>(lanes));
+            weights[i] = Vector256.Create(1f) - second;
+            weights[16 + i] = second;
+        }
+
+        for (int lane = 0; lane < Lanes; lane++)
+        {
+            lanes[lane] = Bc7Tables.AnchorSecondSubset[shapeOf[lane]];
+        }
+
+        anchors[0] = Vector256<int>.Zero;
+        anchors[1] = Vector256.Create<int>(lanes);
+
+        for (int region = 0; region < 2; region++)
+        {
+            Span<Vector256<float>> regionEndpoints = endpoints.Slice(region * 6, 6);
+            FitPrincipalAxis(pixels, weights.Slice(region * 16, 16), 3, regionEndpoints, minimum, MaxHalfMagnitude);
+            OrientTowardAnchor(pixels, regionEndpoints, anchors[region]);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static Vector256<float> EncodeBc6hTwoRegionMode(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, ReadOnlySpan<Vector256<int>> anchors,
+        ReadOnlySpan<Vector256<float>> initialEndpoints, int mode, Vector256<int> shape, bool signed, Span<byte> output)
+    {
+        BcDecoder.Bc6hModeInfo info = BcDecoder.Bc6hModes[mode];
+        float minimum = signed ? -MaxHalfMagnitude : 0;
+        Span<Vector256<float>> endpoints = stackalloc Vector256<float>[12];
+        Span<Vector256<int>> codes = stackalloc Vector256<int>[12];
+        Span<Vector256<int>> bestCodes = stackalloc Vector256<int>[12];
+        Span<Vector256<int>> indices = stackalloc Vector256<int>[2 * 16];
+        Span<Vector256<int>> bestIndices = stackalloc Vector256<int>[2 * 16];
+        initialEndpoints.CopyTo(endpoints);
+
+        Vector256<float> bestError = Vector256.Create(float.MaxValue);
+
+        for (int iteration = 0; ; iteration++)
+        {
+            for (int k = 0; k < 12; k++)
+            {
+                codes[k] = QuantizeBc6hEndpoint(endpoints[k], info.EndpointBits, signed);
+            }
+
+            if (info.Transformed)
+            {
+                for (int k = 3; k < 12; k++)
+                {
+                    int limit = (1 << (info.DeltaBits(k % 3) - 1)) - 1;
+                    Vector256<int> delta = Vector256.Min(Vector256.Max(codes[k] - codes[k % 3], Vector256.Create(-limit)), Vector256.Create(limit));
+                    codes[k] = codes[k % 3] + delta;
+                }
+            }
+
+            Vector256<float> error = Vector256<float>.Zero;
+
+            for (int region = 0; region < 2; region++)
+            {
+                error += MatchBc6hIndices(pixels, weights.Slice(region * 16, 16), codes.Slice(region * 6, 6), info, signed, anchors[region], indices.Slice(region * 16, 16));
+            }
+
+            Vector256<int> better = Vector256.LessThan(error, bestError).AsInt32();
+            bestError = Vector256.Min(error, bestError);
+
+            for (int k = 0; k < 12; k++)
+            {
+                bestCodes[k] = Vector256.ConditionalSelect(better, codes[k], bestCodes[k]);
+            }
+
+            for (int i = 0; i < 32; i++)
+            {
+                bestIndices[i] = Vector256.ConditionalSelect(better, indices[i], bestIndices[i]);
+            }
+
+            if (iteration == PartitionRefineIterations)
+            {
+                break;
+            }
+
+            for (int region = 0; region < 2; region++)
+            {
+                LeastSquares(pixels, weights.Slice(region * 16, 16), 3, bestIndices.Slice(region * 16, 16), info.IndexBits, endpoints.Slice(region * 6, 6),
+                    minimum, MaxHalfMagnitude);
+            }
+        }
+
+        Span<Vector256<int>> combined = stackalloc Vector256<int>[16];
+
+        for (int i = 0; i < 16; i++)
+        {
+            combined[i] = Vector256.ConditionalSelect(Vector256.Equals(weights[16 + i], Vector256.Create(1f)).AsInt32(), bestIndices[16 + i], bestIndices[i]);
+        }
+
+        Span<int> slots = stackalloc int[12];
+
+        for (int lane = 0; lane < Lanes; lane++)
+        {
+            for (int k = 0; k < 12; k++)
+            {
+                int c = k % 3;
+                int value = bestCodes[k].GetElement(lane);
+                slots[k] = k < 3 || !info.Transformed ? value & ((1 << info.EndpointBits) - 1) : (value - bestCodes[c].GetElement(lane)) & ((1 << info.DeltaBits(c)) - 1);
+            }
+
+            WriteBc6hBlock(mode, shape.GetElement(lane), slots, combined, lane, output.Slice(lane * 16, 16));
+        }
+
+        return bestError;
+    }
+
+    private static void OrientTowardAnchor(ReadOnlySpan<Vector256<float>> pixels, Span<Vector256<float>> endpoints, Vector256<int> anchor)
+    {
+        Vector256<float> projection = Vector256<float>.Zero;
+        Vector256<float> lengthSquared = Vector256<float>.Zero;
+
+        for (int c = 0; c < 3; c++)
+        {
+            Vector256<float> value = Vector256<float>.Zero;
+
+            for (int i = 0; i < 16; i++)
+            {
+                value = Vector256.ConditionalSelect(Vector256.Equals(anchor, Vector256.Create(i)).AsSingle(), pixels[c * 16 + i], value);
+            }
+
+            Vector256<float> direction = endpoints[3 + c] - endpoints[c];
+            projection += (value - endpoints[c]) * direction;
+            lengthSquared += direction * direction;
+        }
+
+        Vector256<float> swap = Vector256.GreaterThan(projection * Vector256.Create(2f), lengthSquared);
+
+        for (int c = 0; c < 3; c++)
+        {
+            Vector256<float> low = endpoints[c];
+            endpoints[c] = Vector256.ConditionalSelect(swap, endpoints[3 + c], low);
+            endpoints[3 + c] = Vector256.ConditionalSelect(swap, low, endpoints[3 + c]);
+        }
     }
 
     #endregion
@@ -1524,7 +1707,7 @@ internal static class BcEncoderSimd
                 }
             }
 
-            EstimatePartitions(pixels, estimateChannels, 2, partitions);
+            EstimatePartitions(pixels, estimateChannels, 2, 64, partitions);
             Keep(EncodeEndpointMode(pixels, 1, partitions[1], alphaError, candidate), Vector256<float>.AllBitsSet, ref bestError, candidate, encoded);
             Keep(EncodeEndpointMode(pixels, 3, partitions[1], alphaError, candidate), Vector256<float>.AllBitsSet, ref bestError, candidate, encoded);
 
@@ -1537,7 +1720,7 @@ internal static class BcEncoderSimd
 
             if (needsThreeSubsets != Vector256<float>.Zero)
             {
-                EstimatePartitions(pixels, estimateChannels, 3, partitions);
+                EstimatePartitions(pixels, estimateChannels, 3, 64, partitions);
                 Keep(EncodeEndpointMode(pixels, 0, partitions[0], alphaError, candidate), needsThreeSubsets, ref bestError, candidate, encoded);
                 Keep(EncodeEndpointMode(pixels, 2, partitions[1], alphaError, candidate), needsThreeSubsets, ref bestError, candidate, encoded);
             }
@@ -1606,7 +1789,7 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void EstimatePartitions(ReadOnlySpan<Vector256<float>> pixels, int channels, int subsets, Span<Vector256<int>> best)
+    private static void EstimatePartitions(ReadOnlySpan<Vector256<float>> pixels, int channels, int subsets, int partitionCount, Span<Vector256<int>> best)
     {
         int momentCount = channels + channels * (channels + 1) / 2;
         Span<Vector256<float>> moments = stackalloc Vector256<float>[16 * 14];
@@ -1644,7 +1827,7 @@ internal static class BcEncoderSimd
         best[0] = Vector256<int>.Zero;
         best[1] = Vector256<int>.Zero;
 
-        for (int partition = 0; partition < 64; partition++)
+        for (int partition = 0; partition < partitionCount; partition++)
         {
             ReadOnlySpan<byte> members = Bc7Tables.SubsetMembers(subsets, partition);
             counts[1] = members[0];
