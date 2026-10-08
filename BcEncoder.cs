@@ -148,7 +148,7 @@ public static class BcEncoder
     {
         public static int BlockSize => 16;
         public static BlockKind Kind => BlockKind.Bc7;
-        public static void Encode(ReadOnlySpan<byte> block, Span<byte> dest, int alphaThreshold) => Bc7EncoderSimd128.EncodeRow(block, 4, 4, 0, 1, dest);
+        public static void Encode(ReadOnlySpan<byte> block, Span<byte> dest, int alphaThreshold) => BcEncoderSimd128.EncodeBc7Row(block, 4, 4, 0, 1, dest);
     }
 
     private static int PreferredSimdWidth => BcEncoderSimd512.IsSupported ? 512 : BcEncoderSimd.IsSupported ? 256 : 0;
@@ -228,13 +228,13 @@ public static class BcEncoder
         switch (simdWidth)
         {
             case 512:
-                Bc7EncoderSimd512.EncodeRow(src, width, height, by, blocksX, row);
+                BcEncoderSimd512.EncodeBc7Row(src, width, height, by, blocksX, row);
                 break;
             case 256:
-                Bc7EncoderSimd.EncodeRow(src, width, height, by, blocksX, row);
+                BcEncoderSimd.EncodeBc7Row(src, width, height, by, blocksX, row);
                 break;
             default:
-                Bc7EncoderSimd128.EncodeRow(src, width, height, by, blocksX, row);
+                BcEncoderSimd128.EncodeBc7Row(src, width, height, by, blocksX, row);
                 break;
         }
     }

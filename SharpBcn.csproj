@@ -42,10 +42,9 @@
 
   <Target Name="GenerateBcEncoderSimd512" BeforeTargets="CoreCompile">
     <GenerateWideSimd Source="$(MSBuildProjectDirectory)/BcEncoderSimd.cs" Destination="$(IntermediateOutputPath)BcEncoderSimd512.g.cs" ClassName="BcEncoderSimd" Width="512" />
-    <GenerateWideSimd Source="$(MSBuildProjectDirectory)/Bc7EncoderSimd.cs" Destination="$(IntermediateOutputPath)Bc7EncoderSimd512.g.cs" ClassName="Bc7EncoderSimd" Width="512" />
-    <GenerateWideSimd Source="$(MSBuildProjectDirectory)/Bc7EncoderSimd.cs" Destination="$(IntermediateOutputPath)Bc7EncoderSimd128.g.cs" ClassName="Bc7EncoderSimd" Width="128" />
+    <GenerateWideSimd Source="$(MSBuildProjectDirectory)/BcEncoderSimd.cs" Destination="$(IntermediateOutputPath)BcEncoderSimd128.g.cs" ClassName="BcEncoderSimd" Width="128" />
     <ItemGroup>
-      <Compile Include="$(IntermediateOutputPath)BcEncoderSimd512.g.cs;$(IntermediateOutputPath)Bc7EncoderSimd512.g.cs;$(IntermediateOutputPath)Bc7EncoderSimd128.g.cs" />
+      <Compile Include="$(IntermediateOutputPath)BcEncoderSimd512.g.cs;$(IntermediateOutputPath)BcEncoderSimd128.g.cs" />
     </ItemGroup>
   </Target>
 
