@@ -8,4 +8,5 @@ public enum BcFormat
     Bc3,
     Bc4,
     Bc5,
+    Bc7,
 }

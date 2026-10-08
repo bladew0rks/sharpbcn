@@ -11,6 +11,7 @@ public static class BcDecoder
         BcFormat.Bc3 => DecodeBc3(data, width, height),
         BcFormat.Bc4 => DecodeBc4(data, width, height),
         BcFormat.Bc5 => DecodeBc5(data, width, height),
+        BcFormat.Bc7 => DecodeBc7(data, width, height),
         _ => throw new ArgumentOutOfRangeException(nameof(format), format, null),
     };
 
@@ -73,6 +74,11 @@ public static class BcDecoder
                 pixels[i * 4 + 3] = 255;
             }
         });
+    }
+
+    public static byte[] DecodeBc7(ReadOnlySpan<byte> data, int width, int height)
+    {
+        return DecodeBlocks(data, width, height, 16, Bc7Decoder.DecodeBlock);
     }
 
     private delegate void BlockDecoder(ReadOnlySpan<byte> block, Span<byte> pixels);

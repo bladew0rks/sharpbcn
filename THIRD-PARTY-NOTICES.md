@@ -2,7 +2,10 @@
 
 `ClusterTables.cs` contains the total-ordering tables (`g_unique_total_orders4` and the 32-entry
 `g_best_total_orderings4`) from rgbcx, part of [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo),
-used under its MIT license:
+used under its MIT license.
+
+`Bc7Tables.cs` contains the BC7 partition, anchor and weight tables from bc7decomp, also part of
+bc7enc_rdo, used under the same MIT license:
 
 ```
 Copyright(c) 2020-2021 Richard Geldreich, Jr.
