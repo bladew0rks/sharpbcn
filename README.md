@@ -58,13 +58,22 @@ Measurements:
 - BC1 drops Leaf001's alpha, BC7 keeps it and is scored on RGB
 - BC4 runs on the five grayscale texture maps
 - Time covers the whole set, PNG loading included, on a Ryzen 7 9800X3D using all 16 threads
-- Kodak is too small for useful times, so it only has scores
 - Quality is the [SSIMULACRA 2](https://github.com/cloudinary/ssimulacra2) score against the source, averaged over the images, so higher is better
+- The charts put time on a log scale, and the dashed line connects the encoders that nothing else beats on both speed and quality
+- Kodak is too small for useful times, so its scores are only in the numbers under each chart
 
 ### SharpBcn and BCnEncoder.NET
 
 The other pure .NET encoder, at its best quality, except BC7 on the textures and CLIC, which use its fast setting because best quality takes too long there.
 Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bcnencoder-dark.svg">
+  <img alt="Encode time of SharpBcn and BCnEncoder.NET per format" src="docs/bcnencoder.svg">
+</picture>
+
+<details>
+<summary>Numbers</summary>
 
 | Format | Images | SharpBcn time | SharpBcn quality | BCnEncoder.NET time | BCnEncoder.NET quality |
 |---|---|---|---|---|---|
@@ -78,7 +87,17 @@ Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
 | BC6H | HDRIs | 0.10 s | 91.06 | 13.17 s | 89.08 |
 | BC6H signed | HDRIs | 0.12 s | 89.41 | 12.95 s | 87.57 |
 
+</details>
+
 ### BC1
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bc1-dark.svg">
+  <img alt="BC1 encode time against SSIMULACRA 2" src="docs/bc1.svg">
+</picture>
+
+<details>
+<summary>Numbers</summary>
 
 | Encoder | Textures time | Textures | Kodak | CLIC time | CLIC |
 |---|---|---|---|---|---|
@@ -94,7 +113,17 @@ Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
 | BCnEncoder.NET 2.3.0, balanced | 9.48 s | 75.40 | 80.53 | 9.48 s | 81.87 |
 | BCnEncoder.NET 2.3.0, fast | 2.79 s | 69.50 | 67.89 | 2.90 s | 71.93 |
 
+</details>
+
 ### BC4
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bc4-dark.svg">
+  <img alt="BC4 encode time against SSIMULACRA 2" src="docs/bc4.svg">
+</picture>
+
+<details>
+<summary>Numbers</summary>
 
 | Encoder | Time | Quality |
 |---|---|---|
@@ -106,7 +135,17 @@ Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
 | BCnEncoder.NET 2.3.0, best quality | 2.43 s | 89.18 |
 | BCnEncoder.NET 2.3.0, fast | 1.80 s | 89.19 |
 
+</details>
+
 ### BC7
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bc7-dark.svg">
+  <img alt="BC7 encode time against SSIMULACRA 2" src="docs/bc7.svg">
+</picture>
+
+<details>
+<summary>Numbers</summary>
 
 | Encoder | Textures time | Textures | Kodak | CLIC time | CLIC |
 |---|---|---|---|---|---|
@@ -123,6 +162,8 @@ Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
 | BCnEncoder.NET 2.3.0, best quality | | | 92.70 | | |
 | BCnEncoder.NET 2.3.0, balanced | | | 92.45 | | |
 | BCnEncoder.NET 2.3.0, fast | 112.44 s | 89.42 | 92.27 | 116.57 s | 91.50 |
+
+</details>
 
 On Leaf001's alpha channel SharpBcn reaches 64.9 dB PSNR, against 56.3 to 57.8 dB for bc7e and the ISPC Texture Compressor.
 
@@ -152,6 +193,14 @@ Measurements:
 - mPSNR is the PSNR of 8-bit tonemapped images (gamma 2.2), averaged over exposures from -4 to +4 stops
 - SSIMULACRA 2 is averaged over the same tonemapped images at -4, -2, 0, +2 and +4 stops
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bc6h-dark.svg">
+  <img alt="BC6H encode time against SSIMULACRA 2" src="docs/bc6h.svg">
+</picture>
+
+<details>
+<summary>Numbers</summary>
+
 | Encoder | Time | Half PSNR | mPSNR | SSIMULACRA 2 |
 |---|---|---|---|---|
 | SharpBcn | 0.10 s | 61.08 dB | 50.08 dB | 91.06 |
@@ -170,6 +219,8 @@ Measurements:
 | Compressonator 4.5.52, signed, quality 0.05 | 7.74 s | 52.52 dB | 46.55 dB | 84.06 |
 | BCnEncoder.NET 2.3.0, signed, best quality | 12.95 s | 46.17 dB | 45.37 dB | 87.57 |
 | BCnEncoder.NET 2.3.0, signed, balanced | 1.13 s | 45.64 dB | 44.39 dB | 85.53 |
+
+</details>
 
 The ISPC Texture Compressor only does unsigned BC6H. BCnEncoder.NET's signed BC6H at `Fast` produced unusable output (0.35 dB half PSNR), so it's left out.
 
