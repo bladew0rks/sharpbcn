@@ -43,78 +43,104 @@ Half[] back = BcDecoder.DecodeBc6h(bc6h, width, height, signed: false);
 
 ## Performance
 
-Test textures, all 4K PNGs:
+Test images:
 
-- [Leaf001](https://ambientcg.com/view?id=Leaf001) (ambientCG): color, normal, AO, opacity, roughness
-- [MetalPlates006](https://ambientcg.com/view?id=MetalPlates006) (ambientCG): color, normal, metalness, roughness
-- [rusty_metal_02](https://polyhaven.com/a/rusty_metal_02) (Poly Haven): color, normal
+- 4K textures:
+  - [Leaf001](https://ambientcg.com/view?id=Leaf001) (ambientCG): color, normal, AO, opacity, roughness
+  - [MetalPlates006](https://ambientcg.com/view?id=MetalPlates006) (ambientCG): color, normal, metalness, roughness
+  - [rusty_metal_02](https://polyhaven.com/a/rusty_metal_02) (Poly Haven): color, normal
+- [Kodak](https://r0k.us/graphics/kodak/): 24 photos, 768x512
+- [CLIC 2020](https://www.compression.cc/) professional validation set: 41 photos, about 2 megapixels each, cropped to a multiple of 4
 
 Measurements:
 
-- BC1 runs on the six color and normal maps, with Leaf001's alpha dropped
-- BC7 runs on the same six maps, keeping Leaf001's alpha, and is scored on RGB with alpha listed separately
-- BC4 runs on the five grayscale maps
+- BC1 and BC7 run on the photos and on the six texture color and normal maps
+- BC1 drops Leaf001's alpha, BC7 keeps it and is scored on RGB
+- BC4 runs on the five grayscale texture maps
 - Time covers the whole set, PNG loading included, on a Ryzen 7 9800X3D using all 16 threads
-- Quality is the [SSIMULACRA 2](https://github.com/cloudinary/ssimulacra2) score against the source, averaged over the maps, so higher is better
+- Kodak is too small for useful times, so it only has scores
+- Quality is the [SSIMULACRA 2](https://github.com/cloudinary/ssimulacra2) score against the source, averaged over the images, so higher is better
 
-### BC1 and BC4
+### BC1
 
-| Encoder | BC1 time | BC1 quality | BC4 time | BC4 quality |
-|---|---|---|---|---|
-| SharpBcn | 0.80 s | 83.18 | 0.34 s | 89.30 |
-| rgbcx (bc7enc_rdo), level 18 | 9.54 s | 83.70 | 2.74 s | 88.50 |
-| rgbcx (bc7enc_rdo), level 10 | 3.78 s | 82.93 | | |
-| icbc, level 9 | 2.03 s | 82.82 | | |
-| icbc, level 8 | 0.73 s | 81.50 | | |
-| Compressonator 4.5.52, quality 1.0 | 2.92 s | 81.12 | 0.77 s | 89.21 |
-| stb_dxt, high quality | 0.32 s | 80.70 | 0.18 s | 87.91 |
-| ISPC Texture Compressor | 0.36 s | 77.84 | 0.21 s | 88.06 |
+| Encoder | Textures time | Textures | Kodak | CLIC time | CLIC |
+|---|---|---|---|---|---|
+| SharpBcn | 0.83 s | 83.18 | 82.78 | 0.54 s | 83.33 |
+| rgbcx (bc7enc_rdo), level 18 | 9.87 s | 83.70 | 83.04 | 8.63 s | 83.57 |
+| rgbcx (bc7enc_rdo), level 10 | 4.02 s | 82.93 | 82.18 | 2.40 s | 82.68 |
+| icbc, level 9 | 2.07 s | 82.82 | 82.62 | 2.16 s | 82.89 |
+| icbc, level 8 | 0.77 s | 81.50 | 81.84 | 0.79 s | 81.95 |
+| Compressonator 4.5.52, quality 1.0 | 3.15 s | 81.12 | 79.39 | 4.36 s | 80.31 |
+| stb_dxt, high quality | 0.35 s | 80.70 | 79.55 | 0.26 s | 80.00 |
+| ISPC Texture Compressor | 0.42 s | 77.84 | 77.55 | 0.24 s | 77.25 |
+
+### BC4
+
+| Encoder | Time | Quality |
+|---|---|---|
+| SharpBcn | 0.34 s | 89.30 |
+| Compressonator 4.5.52, quality 1.0 | 0.77 s | 89.21 |
+| rgbcx (bc7enc_rdo) | 2.74 s | 88.50 |
+| ISPC Texture Compressor | 0.21 s | 88.06 |
+| stb_dxt, high quality | 0.18 s | 87.91 |
+
+### BC7
+
+| Encoder | Textures time | Textures | Kodak | CLIC time | CLIC |
+|---|---|---|---|---|---|
+| SharpBcn | 2.91 s | 89.92 | 92.25 | 2.58 s | 91.32 |
+| bc7e (bc7enc_rdo), level 4 | 5.02 s | 89.93 | 92.38 | 3.38 s | 91.49 |
+| bc7e (bc7enc_rdo), level 2 | 3.81 s | 89.60 | 92.12 | 2.07 s | 91.43 |
+| bc7enc (bc7enc_rdo), level 4 | 7.55 s | 89.29 | 92.15 | 5.41 s | 91.41 |
+| ISPC Texture Compressor, slow | 16.81 s | 90.00 | 92.34 | 16.61 s | 91.45 |
+| ISPC Texture Compressor, basic | 5.09 s | 89.87 | 92.19 | 4.84 s | 91.36 |
+| ISPC Texture Compressor, veryfast | 1.38 s | 89.60 | 92.08 | 1.21 s | 91.32 |
+| Compressonator 4.5.52, quality 0.05 | 95.03 s | 89.41 | 92.16 | 193.65 s | 91.42 |
+| Compressonator 4.5.52, quality 0.2 | | | 92.57 | 426.31 s | 91.66 |
+| Compressonator 4.5.52, quality 0.5 | | | 92.68 | | |
+
+On Leaf001's alpha channel SharpBcn reaches 64.9 dB PSNR, against 56.3 to 57.8 dB for bc7e and the ISPC Texture Compressor.
 
 Settings used with each encoder:
 
 - rgbcx: `bc7enc -1 -L18`, `bc7enc -1 -L10` and `bc7enc -4`
-- Compressonator: `compressonatorcli -fd BC1` or `-fd BC4`, plus `-Quality 1.0 -nomipmap`
+- bc7e: `bc7enc -U -u4` and `-u2`, built with `SUPPORT_BC7E` and ISPC 1.31
+- bc7enc: `bc7enc -C -u4`
+- Compressonator: `compressonatorcli -fd BC1`, `-fd BC4` or `-fd BC7`, plus `-Quality` and `-nomipmap`
 - [icbc](https://github.com/castano/icbc): D3D10 decoder, equal color weights, 3-color mode and 3-color black turned on
 - [stb_dxt](https://github.com/nothings/stb/blob/master/stb_dxt.h): `STB_DXT_HIGHQUAL`
+- ISPC Texture Compressor: the default BC1 and BC4 encoders, and the `slow`, `basic` and `veryfast` BC7 profiles, using the `alpha_` variants for Leaf001's color map
 - icbc, stb_dxt and the ISPC Texture Compressor were built with AVX-512 and run on 16 threads
 - icbc and stb_dxt read the PNGs through stb_image
-
-### BC7
-
-| Encoder | Time | SSIMULACRA 2 | RGB PSNR | Leaf001 alpha PSNR |
-|---|---|---|---|---|
-| SharpBcn | 3.01 s | 89.92 | 52.21 dB | 64.93 dB |
-| bc7e (bc7enc_rdo), level 4 | 4.95 s | 89.93 | 52.14 dB | 56.32 dB |
-| bc7e (bc7enc_rdo), level 2 | 3.72 s | 89.60 | 50.78 dB | 56.73 dB |
-| ISPC Texture Compressor, slow | 16.08 s | 90.00 | 52.40 dB | 57.83 dB |
-| ISPC Texture Compressor, basic | 4.97 s | 89.87 | 52.18 dB | 57.31 dB |
-| ISPC Texture Compressor, veryfast | 1.35 s | 89.60 | 50.83 dB | 56.62 dB |
-
-Settings used with each encoder:
-
-- bc7e: `bc7enc -U -u4` and `-u2`, built with `SUPPORT_BC7E` and ISPC 1.31
-- ISPC Texture Compressor: the `slow`, `basic` and `veryfast` profiles, using the `alpha_` variants for Leaf001's color map
 
 ### BC6H
 
 Test images are three 2K HDRIs from Poly Haven: [kloppenheim_06](https://polyhaven.com/a/kloppenheim_06), [venice_sunset](https://polyhaven.com/a/venice_sunset) and [studio_small_09](https://polyhaven.com/a/studio_small_09).
+The signed rows use the same images multiplied by a cosine wave, so every block mixes positive and negative values.
 
 Measurements:
 
-- Time is encoding only, since the inputs are already half floats
+- Time is encoding only for SharpBcn and the ISPC Texture Compressor, since the inputs are already half floats
+- Compressonator's time is the whole command line run, from half float DDS files
 - Half PSNR compares the half float bit patterns, which works out to roughly a log-space error
 - mPSNR is the PSNR of 8-bit tonemapped images (gamma 2.2), averaged over exposures from -4 to +4 stops
+- SSIMULACRA 2 is averaged over the same tonemapped images at -4, -2, 0, +2 and +4 stops
 
-| Encoder | Time | Half PSNR | mPSNR |
-|---|---|---|---|
-| SharpBcn | 0.15 s | 61.08 dB | 50.08 dB |
-| ISPC Texture Compressor, veryslow | 0.77 s | 61.08 dB | 50.11 dB |
-| ISPC Texture Compressor, slow | 0.34 s | 61.07 dB | 50.10 dB |
-| ISPC Texture Compressor, basic | 0.08 s | 60.98 dB | 50.01 dB |
-| ISPC Texture Compressor, fast | 0.03 s | 60.71 dB | 49.74 dB |
-| ISPC Texture Compressor, veryfast | 0.01 s | 58.71 dB | 47.96 dB |
+| Encoder | Time | Half PSNR | mPSNR | SSIMULACRA 2 |
+|---|---|---|---|---|
+| SharpBcn | 0.10 s | 61.08 dB | 50.08 dB | 91.06 |
+| ISPC Texture Compressor, veryslow | 0.79 s | 61.08 dB | 50.11 dB | 91.08 |
+| ISPC Texture Compressor, slow | 0.33 s | 61.07 dB | 50.10 dB | 91.08 |
+| ISPC Texture Compressor, basic | 0.07 s | 60.98 dB | 50.01 dB | 91.09 |
+| ISPC Texture Compressor, fast | 0.03 s | 60.71 dB | 49.74 dB | 90.85 |
+| ISPC Texture Compressor, veryfast | 0.01 s | 58.71 dB | 47.96 dB | 88.50 |
+| Compressonator 4.5.52, quality 1.0 | 159.78 s | 60.14 dB | 49.18 dB | 90.01 |
+| Compressonator 4.5.52, quality 0.05 | 7.39 s | 60.14 dB | 49.18 dB | 90.03 |
+| SharpBcn, signed | 0.12 s | 53.03 dB | 46.96 dB | 89.41 |
+| Compressonator 4.5.52, signed, quality 1.0 | 122.91 s | 52.52 dB | 46.58 dB | 84.32 |
+| Compressonator 4.5.52, signed, quality 0.05 | 7.74 s | 52.52 dB | 46.55 dB | 84.06 |
 
-The ISPC Texture Compressor only does unsigned BC6H, so signed BC6H has no comparison here.
+The ISPC Texture Compressor only does unsigned BC6H.
 
 ## License
 
