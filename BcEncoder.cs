@@ -36,6 +36,8 @@ public static class BcEncoder
 
     public static byte[] EncodeBc5(ReadOnlySpan<byte> rgba, int width, int height, bool parallel = true) => Encode(BcFormat.Bc5, rgba, width, height, parallel: parallel);
 
+    public static byte[] EncodeBc7(ReadOnlySpan<byte> rgba, int width, int height, bool parallel = true) => Encode(BcFormat.Bc7, rgba, width, height, parallel: parallel);
+
     public static byte[] Encode(BcFormat format, ReadOnlySpan<byte> rgba, int width, int height, int alphaThreshold = 128, bool parallel = true)
     {
         byte[] output = GC.AllocateUninitializedArray<byte>(GetCompressedSize(width, height, format));
@@ -67,6 +69,9 @@ public static class BcEncoder
             case BcFormat.Bc5:
                 EncodeBlocks<Bc5Block>(rgba, width, height, output, 0, parallel, simdWidth);
                 break;
+            case BcFormat.Bc7:
+                EncodeBlocks<Bc7Block>(rgba, width, height, output, 0, parallel, simdWidth);
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(format), format, null);
         }
@@ -79,6 +84,7 @@ public static class BcEncoder
         Bc3,
         Bc4,
         Bc5,
+        Bc7,
     }
 
     private interface IBlockEncoder
@@ -138,6 +144,13 @@ public static class BcEncoder
         }
     }
 
+    private struct Bc7Block : IBlockEncoder
+    {
+        public static int BlockSize => 16;
+        public static BlockKind Kind => BlockKind.Bc7;
+        public static void Encode(ReadOnlySpan<byte> block, Span<byte> dest, int alphaThreshold) => Bc7EncoderSimd128.EncodeRow(block, 4, 4, 0, 1, dest);
+    }
+
     private static int PreferredSimdWidth => BcEncoderSimd512.IsSupported ? 512 : BcEncoderSimd.IsSupported ? 256 : 0;
 
     private static unsafe void EncodeBlocks<T>(ReadOnlySpan<byte> rgba, int width, int height, Span<byte> output, int alphaThreshold, bool parallel, int simdWidth)
@@ -168,6 +181,12 @@ public static class BcEncoder
             {
                 ReadOnlySpan<byte> src = new ReadOnlySpan<byte>((void*)source, sourceLength);
                 Span<byte> row = new Span<byte>((byte*)destination + by * blocksX * blockSize, blocksX * blockSize);
+
+                if (T.Kind == BlockKind.Bc7)
+                {
+                    EncodeBc7Row(simdWidth, src, width, height, by, blocksX, row);
+                    return;
+                }
 
                 if (simdWidth == 512)
                 {
@@ -201,6 +220,22 @@ public static class BcEncoder
                     EncodeRow(by);
                 }
             }
+        }
+    }
+
+    private static void EncodeBc7Row(int simdWidth, ReadOnlySpan<byte> src, int width, int height, int by, int blocksX, Span<byte> row)
+    {
+        switch (simdWidth)
+        {
+            case 512:
+                Bc7EncoderSimd512.EncodeRow(src, width, height, by, blocksX, row);
+                break;
+            case 256:
+                Bc7EncoderSimd.EncodeRow(src, width, height, by, blocksX, row);
+                break;
+            default:
+                Bc7EncoderSimd128.EncodeRow(src, width, height, by, blocksX, row);
+                break;
         }
     }
 

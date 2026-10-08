@@ -22,13 +22,15 @@
     <ParameterGroup>
       <Source ParameterType="System.String" Required="true" />
       <Destination ParameterType="System.String" Required="true" />
+      <ClassName ParameterType="System.String" Required="true" />
+      <Width ParameterType="System.Int32" Required="true" />
     </ParameterGroup>
     <Task>
       <Code Type="Fragment" Language="cs"><![CDATA[
         string text = System.IO.File.ReadAllText(Source)
-            .Replace("Vector256", "Vector512")
-            .Replace("class BcEncoderSimd", "class BcEncoderSimd512")
-            .Replace("public const int Lanes = 8;", "public const int Lanes = 16;");
+            .Replace("Vector256", "Vector" + Width)
+            .Replace("class " + ClassName, "class " + ClassName + Width)
+            .Replace("public const int Lanes = 8;", "public const int Lanes = " + (Width / 32) + ";");
         if (!System.IO.File.Exists(Destination) || System.IO.File.ReadAllText(Destination) != text)
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Destination));
@@ -39,9 +41,11 @@
   </UsingTask>
 
   <Target Name="GenerateBcEncoderSimd512" BeforeTargets="CoreCompile">
-    <GenerateWideSimd Source="$(MSBuildProjectDirectory)/BcEncoderSimd.cs" Destination="$(IntermediateOutputPath)BcEncoderSimd512.g.cs" />
+    <GenerateWideSimd Source="$(MSBuildProjectDirectory)/BcEncoderSimd.cs" Destination="$(IntermediateOutputPath)BcEncoderSimd512.g.cs" ClassName="BcEncoderSimd" Width="512" />
+    <GenerateWideSimd Source="$(MSBuildProjectDirectory)/Bc7EncoderSimd.cs" Destination="$(IntermediateOutputPath)Bc7EncoderSimd512.g.cs" ClassName="Bc7EncoderSimd" Width="512" />
+    <GenerateWideSimd Source="$(MSBuildProjectDirectory)/Bc7EncoderSimd.cs" Destination="$(IntermediateOutputPath)Bc7EncoderSimd128.g.cs" ClassName="Bc7EncoderSimd" Width="128" />
     <ItemGroup>
-      <Compile Include="$(IntermediateOutputPath)BcEncoderSimd512.g.cs" />
+      <Compile Include="$(IntermediateOutputPath)BcEncoderSimd512.g.cs;$(IntermediateOutputPath)Bc7EncoderSimd512.g.cs;$(IntermediateOutputPath)Bc7EncoderSimd128.g.cs" />
     </ItemGroup>
   </Target>
 
