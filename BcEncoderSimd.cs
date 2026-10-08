@@ -50,16 +50,22 @@ internal static class BcEncoderSimd
             switch (kind)
             {
                 case BcEncoder.BlockKind.Bc1:
+                    WriteColorBlocks(blocks, r, g, b, count, dest, 8);
+
                     if (alphaThreshold > 0)
                     {
-                        for (int lane = 0; lane < count; lane++)
+                        ulong transparent = TransparentLanes(a, alphaThreshold);
+
+                        while (transparent != 0)
                         {
-                            BcEncoder.CompressColorBlock(blocks.Slice(lane * 64, 64), dest.Slice(lane * 8, 8), false, alphaThreshold);
+                            int lane = BitOperations.TrailingZeroCount(transparent);
+                            transparent &= transparent - 1;
+
+                            if (lane < count)
+                            {
+                                BcEncoder.CompressColorBlock(blocks.Slice(lane * 64, 64), dest.Slice(lane * 8, 8), false, alphaThreshold);
+                            }
                         }
-                    }
-                    else
-                    {
-                        WriteColorBlocks(blocks, r, g, b, count, dest, 8);
                     }
 
                     break;
@@ -89,6 +95,19 @@ internal static class BcEncoderSimd
     private struct Endpoints
     {
         public Vector256<int> R0, G0, B0, R1, G1, B1;
+    }
+
+    private static ulong TransparentLanes(ReadOnlySpan<Vector256<int>> a, int alphaThreshold)
+    {
+        Vector256<int> threshold = Vector256.Create(alphaThreshold);
+        Vector256<int> any = Vector256<int>.Zero;
+
+        for (int i = 0; i < 16; i++)
+        {
+            any |= Vector256.LessThan(a[i], threshold);
+        }
+
+        return any.ExtractMostSignificantBits();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
