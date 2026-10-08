@@ -2,11 +2,9 @@
 
 Fast, high quality BC1–BC7 texture compression for .NET, written in plain C#.
 
-- Formats: BC1 (DXT1, with optional 1-bit alpha), BC2 (DXT3), BC3 (DXT5), BC4 (ATI1N), BC5 (ATI2N), BC6H (unsigned and signed) and BC7
-- Encodes 16 blocks at once with AVX-512, 8 with AVX2, and falls back to scalar or 128-bit vector code on other CPUs.
-- Every path produces the same output.
-- Multithreaded by default.
-- No native dependencies.
+- BC1 (with optional 1-bit alpha), BC2, BC3, BC4, BC5, BC6H (unsigned and signed) and BC7
+- AVX-512 and AVX2, with a fallback for other CPUs that gives the same output
+- Multithreaded, no native dependencies
 
 ## Usage
 
@@ -20,58 +18,30 @@ byte[] back = BcDecoder.Decode(BcFormat.Bc3, dxt5, width, height);
 
 // Or write into your own buffer, e.g. one mip level of a larger file:
 BcEncoder.Encode(BcFormat.Bc1, rgba, width, height, output.AsSpan(offset));
-```
 
-With `BcFormat.Bc1Alpha`, pixels below `alphaThreshold` (128 unless you pass something else) come out transparent.
-
-BC7 takes the same RGBA bytes:
-
-```csharp
 byte[] bc7 = BcEncoder.EncodeBc7(rgba, width, height);
-```
 
-BC6H takes half floats, 4 per pixel (alpha is ignored), and decodes back to half floats:
-
-```csharp
-Half[] hdr = ...; // width * height * 4 halves, RGBA order
-
+Half[] hdr = ...; // width * height * 4 halves, RGBA order, alpha is ignored
 byte[] bc6h = BcEncoder.EncodeBc6h(hdr, width, height, signed: false);
-Half[] back = BcDecoder.DecodeBc6h(bc6h, width, height, signed: false);
+Half[] hdrBack = BcDecoder.DecodeBc6h(bc6h, width, height, signed: false);
 ```
 
-`BcEncoder.Encode` and `BcDecoder.Decode` also accept `BcFormat.Bc6hUnsigned` and `BcFormat.Bc6hSigned`, with the half floats passed as raw bytes.
+`BcFormat.Bc1Alpha` makes pixels below `alphaThreshold` (default 128) transparent.
 
 ## Performance
 
+Ryzen 7 9800X3D, 16 threads. Time includes PNG loading, quality is [SSIMULACRA 2](https://github.com/cloudinary/ssimulacra2) (higher is better).
+In the charts, the dashed line connects the encoders that nothing else beats on both speed and quality.
+
 Test images:
 
-- 4K textures:
-  - [Leaf001](https://ambientcg.com/view?id=Leaf001) (ambientCG): color, normal, AO, opacity, roughness
-  - [MetalPlates006](https://ambientcg.com/view?id=MetalPlates006) (ambientCG): color, normal, metalness, roughness
-  - [rusty_metal_02](https://polyhaven.com/a/rusty_metal_02) (Poly Haven): color, normal
-- [Kodak](https://r0k.us/graphics/kodak/): 24 photos, 768x512
-- [CLIC 2020](https://www.compression.cc/) professional validation set: 41 photos, about 2 megapixels each, cropped to a multiple of 4
+- Textures, 4K: [Leaf001](https://ambientcg.com/view?id=Leaf001), [MetalPlates006](https://ambientcg.com/view?id=MetalPlates006), [rusty_metal_02](https://polyhaven.com/a/rusty_metal_02). BC1 and BC7 use the color and normal maps, BC4 the grayscale ones
+- [Kodak](https://r0k.us/graphics/kodak/): 24 photos, scores only since it's too small to time
+- [CLIC 2020](https://www.compression.cc/) professional validation set: 41 photos
 
-Measurements:
+### Compared to BCnEncoder.NET
 
-- BC1 and BC7 run on the photos and on the six texture color and normal maps
-- BC1 drops Leaf001's alpha, BC7 keeps it and is scored on RGB
-- BC4 runs on the five grayscale texture maps
-- Time covers the whole set, PNG loading included, on a Ryzen 7 9800X3D using all 16 threads
-- Quality is the [SSIMULACRA 2](https://github.com/cloudinary/ssimulacra2) score against the source, averaged over the images, so higher is better
-- The charts put time on a log scale, and the dashed line connects the encoders that nothing else beats on both speed and quality
-- Kodak is too small for useful times, so its scores are only in the numbers under each chart
-
-### SharpBcn and BCnEncoder.NET
-
-The other pure .NET encoder, at its best quality, except BC7 on the textures and CLIC, which use its fast setting because best quality takes too long there.
-The left chart compares speed, the right one the SSIMULACRA 2 difference, with BC6H scored as described in its section below.
-SharpBcn is 7 to 130 times faster, and BCnEncoder.NET scores higher on BC7 for photos.
-
-<img alt="Encode time and SSIMULACRA 2 difference of SharpBcn and BCnEncoder.NET per format" src="docs/bcnencoder.svg">
-
-<details>
-<summary>Numbers</summary>
+Its best quality setting, except BC7 on textures and CLIC, which use fast.
 
 | Format | Images | SharpBcn time | SharpBcn quality | BCnEncoder.NET time | BCnEncoder.NET quality |
 |---|---|---|---|---|---|
@@ -84,8 +54,6 @@ SharpBcn is 7 to 130 times faster, and BCnEncoder.NET scores higher on BC7 for p
 | BC7 | Kodak | | 92.25 | | 92.70 |
 | BC6H | HDRIs | 0.10 s | 91.06 | 13.17 s | 89.08 |
 | BC6H signed | HDRIs | 0.12 s | 89.41 | 12.95 s | 87.57 |
-
-</details>
 
 ### BC1
 
@@ -154,33 +122,13 @@ SharpBcn is 7 to 130 times faster, and BCnEncoder.NET scores higher on BC7 for p
 
 </details>
 
-On Leaf001's alpha channel SharpBcn reaches 64.9 dB PSNR, against 56.3 to 57.8 dB for bc7e and the ISPC Texture Compressor.
-
-Settings used with each encoder:
-
-- rgbcx: `bc7enc -1 -L18`, `bc7enc -1 -L10` and `bc7enc -4`
-- bc7e: `bc7enc -U -u4` and `-u2`, built with `SUPPORT_BC7E` and ISPC 1.31
-- bc7enc: `bc7enc -C -u4`
-- Compressonator: `compressonatorcli -fd BC1`, `-fd BC4` or `-fd BC7`, plus `-Quality` and `-nomipmap`
-- [icbc](https://github.com/castano/icbc): D3D10 decoder, equal color weights, 3-color mode and 3-color black turned on
-- [stb_dxt](https://github.com/nothings/stb/blob/master/stb_dxt.h): `STB_DXT_HIGHQUAL`
-- ISPC Texture Compressor: the default BC1 and BC4 encoders, and the `slow`, `basic` and `veryfast` BC7 profiles, using the `alpha_` variants for Leaf001's color map
-- [BCnEncoder.NET](https://github.com/Nominom/BCnEncoder.NET): `Quality` set to `BestQuality`, `Balanced` or `Fast`, no mipmaps, parallel with 16 tasks
-- icbc, stb_dxt and the ISPC Texture Compressor were built with AVX-512 and run on 16 threads
-- icbc and stb_dxt read the PNGs through stb_image
+On Leaf001's alpha channel SharpBcn reaches 64.9 dB PSNR, bc7e and ISPC 56 to 58 dB.
 
 ### BC6H
 
-Test images are three 2K HDRIs from Poly Haven: [kloppenheim_06](https://polyhaven.com/a/kloppenheim_06), [venice_sunset](https://polyhaven.com/a/venice_sunset) and [studio_small_09](https://polyhaven.com/a/studio_small_09).
-The signed rows use the same images multiplied by a cosine wave, so every block mixes positive and negative values.
-
-Measurements:
-
-- Time is encoding only for SharpBcn, the ISPC Texture Compressor and BCnEncoder.NET, since the inputs are already half floats
-- Compressonator's time is the whole command line run, from half float DDS files
-- Half PSNR compares the half float bit patterns, which works out to roughly a log-space error
-- mPSNR is the PSNR of 8-bit tonemapped images (gamma 2.2), averaged over exposures from -4 to +4 stops
-- SSIMULACRA 2 is averaged over the same tonemapped images at -4, -2, 0, +2 and +4 stops
+Three 2K HDRIs from Poly Haven: [kloppenheim_06](https://polyhaven.com/a/kloppenheim_06), [venice_sunset](https://polyhaven.com/a/venice_sunset), [studio_small_09](https://polyhaven.com/a/studio_small_09).
+Signed uses the same images multiplied by a cosine wave. Time is encoding only, except for Compressonator.
+SSIMULACRA 2 and mPSNR are averaged over tonemapped exposures from -4 to +4 stops, half PSNR compares the raw half floats.
 
 <img alt="BC6H encode time against SSIMULACRA 2" src="docs/bc6h.svg">
 
@@ -208,7 +156,22 @@ Measurements:
 
 </details>
 
-The ISPC Texture Compressor only does unsigned BC6H. BCnEncoder.NET's signed BC6H at `Fast` produced unusable output (0.35 dB half PSNR), so it's left out.
+ISPC has no signed BC6H, and BCnEncoder.NET's signed fast setting produced broken output.
+
+<details>
+<summary>Encoder settings</summary>
+
+- rgbcx: `bc7enc -1 -L18`, `-1 -L10`, `-4`
+- bc7e: `bc7enc -U -u4`, `-U -u2`, built with ISPC 1.31
+- bc7enc: `bc7enc -C -u4`
+- Compressonator 4.5.52: `-fd <format> -Quality <q> -nomipmap`
+- [icbc](https://github.com/castano/icbc): D3D10 decoder, equal weights, 3-color mode and 3-color black on
+- [stb_dxt](https://github.com/nothings/stb/blob/master/stb_dxt.h): `STB_DXT_HIGHQUAL`
+- ISPC Texture Compressor: default BC1 and BC4, `slow`, `basic` and `veryfast` BC7 profiles, all BC6H profiles
+- [BCnEncoder.NET](https://github.com/Nominom/BCnEncoder.NET) 2.3.0: `BestQuality`, `Balanced` or `Fast`, no mipmaps, 16 tasks
+- icbc, stb_dxt and ISPC were built with AVX-512 and run on 16 threads
+
+</details>
 
 ## License
 
