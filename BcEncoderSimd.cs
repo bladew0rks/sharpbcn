@@ -1222,7 +1222,6 @@ internal static class BcEncoderSimd
         ReadOnlySpan<ulong> source = MemoryMarshal.Cast<byte, ulong>(src);
         Span<ulong> blocks = stackalloc ulong[16 * Lanes];
         Span<byte> encoded = stackalloc byte[16 * Lanes];
-        Span<byte> candidate = stackalloc byte[16 * Lanes];
         Span<Vector256<float>> pixels = stackalloc Vector256<float>[48];
         Span<Vector256<float>> ones = stackalloc Vector256<float>[16];
         Span<Vector256<int>> shapes = stackalloc Vector256<int>[2];
@@ -1259,7 +1258,7 @@ internal static class BcEncoderSimd
 
             for (int mode = 10; mode < 14; mode++)
             {
-                Keep(EncodeBc6hMode(pixels, ones, oneRegionEndpoints, mode, signed, candidate), Vector256<float>.AllBitsSet, ref bestError, candidate, encoded);
+                EncodeBc6hMode(pixels, ones, oneRegionEndpoints, mode, signed, Vector256<float>.AllBitsSet, ref bestError, encoded);
             }
 
             Vector256<float> needsRegions = Vector256.GreaterThan(bestError, Vector256.Create(TwoRegionErrorThreshold));
@@ -1271,8 +1270,7 @@ internal static class BcEncoderSimd
 
                 for (int mode = 0; mode < 10; mode++)
                 {
-                    Keep(EncodeBc6hTwoRegionMode(pixels, regionWeights, anchors, twoRegionEndpoints, mode, shapes[1], signed, candidate), needsRegions,
-                        ref bestError, candidate, encoded);
+                    EncodeBc6hTwoRegionMode(pixels, regionWeights, anchors, twoRegionEndpoints, mode, shapes[1], signed, needsRegions, ref bestError, encoded);
                 }
             }
 
@@ -1302,8 +1300,8 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<float> EncodeBc6hMode(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, ReadOnlySpan<Vector256<float>> initialEndpoints,
-        int mode, bool signed, Span<byte> output)
+    private static void EncodeBc6hMode(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, ReadOnlySpan<Vector256<float>> initialEndpoints,
+        int mode, bool signed, Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
     {
         BcDecoder.Bc6hModeInfo info = BcDecoder.Bc6hModes[mode];
         float minimum = signed ? -MaxHalfMagnitude : 0;
@@ -1355,8 +1353,12 @@ internal static class BcEncoderSimd
         FixAnchor(3, info.IndexBits, Vector256<int>.Zero, bestCodes, pBits, bestIndices);
         Span<int> slots = stackalloc int[12];
 
-        for (int lane = 0; lane < Lanes; lane++)
+        ulong improved = Improve(bestError, allowed, ref encodedError);
+
+        while (improved != 0)
         {
+            int lane = BitOperations.TrailingZeroCount(improved);
+            improved &= improved - 1;
             for (int c = 0; c < 3; c++)
             {
                 int low = bestCodes[c].GetElement(lane);
@@ -1367,8 +1369,6 @@ internal static class BcEncoderSimd
 
             WriteBc6hBlock(mode, 0, slots, bestIndices, lane, output.Slice(lane * 16, 16));
         }
-
-        return bestError;
     }
 
     private static void WriteBc6hBlock(int mode, int shape, ReadOnlySpan<int> slots, ReadOnlySpan<Vector256<int>> indices, int lane, Span<byte> output)
@@ -1553,8 +1553,8 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<float> EncodeBc6hTwoRegionMode(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, ReadOnlySpan<Vector256<int>> anchors,
-        ReadOnlySpan<Vector256<float>> initialEndpoints, int mode, Vector256<int> shape, bool signed, Span<byte> output)
+    private static void EncodeBc6hTwoRegionMode(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, ReadOnlySpan<Vector256<int>> anchors,
+        ReadOnlySpan<Vector256<float>> initialEndpoints, int mode, Vector256<int> shape, bool signed, Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
     {
         BcDecoder.Bc6hModeInfo info = BcDecoder.Bc6hModes[mode];
         float minimum = signed ? -MaxHalfMagnitude : 0;
@@ -1625,8 +1625,12 @@ internal static class BcEncoderSimd
 
         Span<int> slots = stackalloc int[12];
 
-        for (int lane = 0; lane < Lanes; lane++)
+        ulong improved = Improve(bestError, allowed, ref encodedError);
+
+        while (improved != 0)
         {
+            int lane = BitOperations.TrailingZeroCount(improved);
+            improved &= improved - 1;
             for (int k = 0; k < 12; k++)
             {
                 int c = k % 3;
@@ -1636,8 +1640,6 @@ internal static class BcEncoderSimd
 
             WriteBc6hBlock(mode, shape.GetElement(lane), slots, combined, lane, output.Slice(lane * 16, 16));
         }
-
-        return bestError;
     }
 
     private static void OrientTowardAnchor(ReadOnlySpan<Vector256<float>> pixels, Span<Vector256<float>> endpoints, Vector256<int> anchor)
@@ -1690,7 +1692,6 @@ internal static class BcEncoderSimd
     {
         Span<byte> blocks = stackalloc byte[64 * Lanes];
         Span<byte> encoded = stackalloc byte[16 * Lanes];
-        Span<byte> candidate = stackalloc byte[16 * Lanes];
         Span<Vector256<float>> pixels = stackalloc Vector256<float>[64];
         Span<Vector256<float>> rotated = stackalloc Vector256<float>[64];
         Span<Vector256<float>> ones = stackalloc Vector256<float>[16];
@@ -1712,27 +1713,28 @@ internal static class BcEncoderSimd
             Vector256<float> translucent = Vector256.GreaterThan(alphaError, Vector256<float>.Zero);
             bool anyTranslucent = translucent != Vector256<float>.Zero;
             int estimateChannels = anyTranslucent ? 4 : 3;
-            Vector256<float> bestError = EncodeEndpointMode(pixels, 6, Vector256<int>.Zero, alphaError, encoded);
+            Vector256<float> bestError = Vector256.Create(float.MaxValue);
+            EncodeEndpointMode(pixels, 6, Vector256<int>.Zero, alphaError, Vector256<float>.AllBitsSet, ref bestError, encoded);
 
             for (int rotation = anyTranslucent ? 0 : 1; rotation < 4; rotation++)
             {
                 Vector256<float> allowed = rotation == 0 ? translucent : Vector256<float>.AllBitsSet;
                 Rotate(pixels, rotation, rotated);
-                Keep(EncodeMode5(rotated, ones, rotation, candidate), allowed, ref bestError, candidate, encoded);
+                EncodeMode5(rotated, ones, rotation, allowed, ref bestError, encoded);
 
                 for (int indexSelection = 0; indexSelection < 2; indexSelection++)
                 {
-                    Keep(EncodeMode4(rotated, ones, rotation, indexSelection, candidate), allowed, ref bestError, candidate, encoded);
+                    EncodeMode4(rotated, ones, rotation, indexSelection, allowed, ref bestError, encoded);
                 }
             }
 
             EstimatePartitions(pixels, estimateChannels, 2, 64, partitions);
-            Keep(EncodeEndpointMode(pixels, 1, partitions[1], alphaError, candidate), Vector256<float>.AllBitsSet, ref bestError, candidate, encoded);
-            Keep(EncodeEndpointMode(pixels, 3, partitions[1], alphaError, candidate), Vector256<float>.AllBitsSet, ref bestError, candidate, encoded);
+            EncodeEndpointMode(pixels, 1, partitions[1], alphaError, Vector256<float>.AllBitsSet, ref bestError, encoded);
+            EncodeEndpointMode(pixels, 3, partitions[1], alphaError, Vector256<float>.AllBitsSet, ref bestError, encoded);
 
             if (anyTranslucent)
             {
-                Keep(EncodeEndpointMode(pixels, 7, partitions[1], alphaError, candidate), translucent, ref bestError, candidate, encoded);
+                EncodeEndpointMode(pixels, 7, partitions[1], alphaError, translucent, ref bestError, encoded);
             }
 
             Vector256<float> needsThreeSubsets = Vector256.GreaterThan(bestError, Vector256.Create(ThreeSubsetErrorThreshold));
@@ -1740,8 +1742,8 @@ internal static class BcEncoderSimd
             if (needsThreeSubsets != Vector256<float>.Zero)
             {
                 EstimatePartitions(pixels, estimateChannels, 3, 64, partitions);
-                Keep(EncodeEndpointMode(pixels, 0, partitions[0], alphaError, candidate), needsThreeSubsets, ref bestError, candidate, encoded);
-                Keep(EncodeEndpointMode(pixels, 2, partitions[1], alphaError, candidate), needsThreeSubsets, ref bestError, candidate, encoded);
+                EncodeEndpointMode(pixels, 0, partitions[0], alphaError, needsThreeSubsets, ref bestError, encoded);
+                EncodeEndpointMode(pixels, 2, partitions[1], alphaError, needsThreeSubsets, ref bestError, encoded);
             }
 
             encoded[..(count * 16)].CopyTo(row[(bx * 16)..]);
@@ -1793,18 +1795,12 @@ internal static class BcEncoderSimd
         return error;
     }
 
-    private static void Keep(Vector256<float> error, Vector256<float> allowed, ref Vector256<float> bestError, ReadOnlySpan<byte> candidate, Span<byte> encoded)
+    private static ulong Improve(Vector256<float> error, Vector256<float> allowed, ref Vector256<float> encodedError)
     {
         error = Vector256.ConditionalSelect(allowed, error, Vector256.Create(float.MaxValue));
-        ulong better = Vector256.LessThan(error, bestError).ExtractMostSignificantBits();
-        bestError = Vector256.Min(error, bestError);
-
-        while (better != 0)
-        {
-            int lane = BitOperations.TrailingZeroCount(better);
-            candidate.Slice(lane * 16, 16).CopyTo(encoded.Slice(lane * 16, 16));
-            better &= better - 1;
-        }
+        ulong improved = Vector256.LessThan(error, encodedError).ExtractMostSignificantBits();
+        encodedError = Vector256.Min(error, encodedError);
+        return improved;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -1991,8 +1987,8 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<float> EncodeEndpointMode(ReadOnlySpan<Vector256<float>> pixels, int mode, Vector256<int> partition, Vector256<float> alphaError,
-        Span<byte> output)
+    private static void EncodeEndpointMode(ReadOnlySpan<Vector256<float>> pixels, int mode, Vector256<int> partition, Vector256<float> alphaError,
+        Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
     {
         BcDecoder.Bc7ModeInfo info = BcDecoder.Bc7Modes[mode];
         int channels = info.AlphaBits > 0 ? 4 : 3;
@@ -2044,8 +2040,12 @@ internal static class BcEncoderSimd
                 codes.Slice(subset * 8, 8), pBits.Slice(subset * 2, 2), indices.Slice(subset * 16, 16));
         }
 
-        for (int lane = 0; lane < Lanes; lane++)
+        ulong improved = Improve(error, allowed, ref encodedError);
+
+        while (improved != 0)
         {
+            int lane = BitOperations.TrailingZeroCount(improved);
+            improved &= improved - 1;
             int p = partitionOf[lane];
             BitWriter writer = new BitWriter();
             writer.Write(1 << mode, mode + 1);
@@ -2081,12 +2081,10 @@ internal static class BcEncoderSimd
 
             writer.CopyTo(output.Slice(lane * 16, 16));
         }
-
-        return error;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<float> EncodeMode5(ReadOnlySpan<Vector256<float>> rotated, ReadOnlySpan<Vector256<float>> ones, int rotation, Span<byte> output)
+    private static void EncodeMode5(ReadOnlySpan<Vector256<float>> rotated, ReadOnlySpan<Vector256<float>> ones, int rotation, Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
     {
         Span<Vector256<int>> colorCodes = stackalloc Vector256<int>[6];
         Span<Vector256<int>> alphaCodes = stackalloc Vector256<int>[2];
@@ -2096,8 +2094,12 @@ internal static class BcEncoderSimd
         Vector256<float> error = FitEndpoints(rotated[..48], ones, 3, 7, PBits.None, 2, RefineIterations, Vector256<int>.Zero, colorCodes, pBits, colorIndices)
             + FitEndpoints(rotated[48..], ones, 1, 8, PBits.None, 2, RefineIterations, Vector256<int>.Zero, alphaCodes, pBits, alphaIndices);
 
-        for (int lane = 0; lane < Lanes; lane++)
+        ulong improved = Improve(error, allowed, ref encodedError);
+
+        while (improved != 0)
         {
+            int lane = BitOperations.TrailingZeroCount(improved);
+            improved &= improved - 1;
             BitWriter writer = new BitWriter();
             writer.Write(1 << 5, 6);
             writer.Write(rotation, 2);
@@ -2107,12 +2109,10 @@ internal static class BcEncoderSimd
             WriteIndices(ref writer, alphaIndices, 2, lane);
             writer.CopyTo(output.Slice(lane * 16, 16));
         }
-
-        return error;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<float> EncodeMode4(ReadOnlySpan<Vector256<float>> rotated, ReadOnlySpan<Vector256<float>> ones, int rotation, int indexSelection, Span<byte> output)
+    private static void EncodeMode4(ReadOnlySpan<Vector256<float>> rotated, ReadOnlySpan<Vector256<float>> ones, int rotation, int indexSelection, Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
     {
         Span<Vector256<int>> colorCodes = stackalloc Vector256<int>[6];
         Span<Vector256<int>> alphaCodes = stackalloc Vector256<int>[2];
@@ -2124,8 +2124,12 @@ internal static class BcEncoderSimd
         Vector256<float> error = FitEndpoints(rotated[..48], ones, 3, 5, PBits.None, colorIndexBits, RefineIterations, Vector256<int>.Zero, colorCodes, pBits, colorIndices)
             + FitEndpoints(rotated[48..], ones, 1, 6, PBits.None, alphaIndexBits, RefineIterations, Vector256<int>.Zero, alphaCodes, pBits, alphaIndices);
 
-        for (int lane = 0; lane < Lanes; lane++)
+        ulong improved = Improve(error, allowed, ref encodedError);
+
+        while (improved != 0)
         {
+            int lane = BitOperations.TrailingZeroCount(improved);
+            improved &= improved - 1;
             BitWriter writer = new BitWriter();
             writer.Write(1 << 4, 5);
             writer.Write(rotation, 2);
@@ -2136,8 +2140,6 @@ internal static class BcEncoderSimd
             WriteIndices(ref writer, indexSelection == 0 ? alphaIndices : colorIndices, 3, lane);
             writer.CopyTo(output.Slice(lane * 16, 16));
         }
-
-        return error;
     }
 
     private static void WriteEndpoints(ref BitWriter writer, ReadOnlySpan<Vector256<int>> codes, int channels, int bits, int lane)
