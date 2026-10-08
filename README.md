@@ -63,20 +63,20 @@ Measurements:
 
 ### SharpBcn and BCnEncoder.NET
 
-The other pure .NET encoder, using its best quality where it finished in reasonable time and its fast setting otherwise.
+The other pure .NET encoder, at its best quality, except BC7 on the textures and CLIC, which use its fast setting because best quality takes too long there.
 Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
 
-| Format | Images | SharpBcn time | SharpBcn quality | BCnEncoder.NET setting | BCnEncoder.NET time | BCnEncoder.NET quality |
-|---|---|---|---|---|---|---|
-| BC1 | Textures | 0.83 s | 83.18 | best quality | 8.39 s | 82.51 |
-| BC1 | CLIC | 0.54 s | 83.33 | best quality | 9.07 s | 82.28 |
-| BC1 | Kodak | | 82.78 | best quality | | 80.36 |
-| BC4 | Textures | 0.34 s | 89.30 | best quality | 2.43 s | 89.18 |
-| BC7 | Textures | 2.91 s | 89.92 | fast | 112.44 s | 89.42 |
-| BC7 | CLIC | 2.58 s | 91.32 | fast | 116.57 s | 91.50 |
-| BC7 | Kodak | | 92.25 | best quality | | 92.70 |
-| BC6H | HDRIs | 0.10 s | 91.06 | best quality | 13.17 s | 89.08 |
-| BC6H signed | HDRIs | 0.12 s | 89.41 | best quality | 12.95 s | 87.57 |
+| Format | Images | SharpBcn time | SharpBcn quality | BCnEncoder.NET time | BCnEncoder.NET quality |
+|---|---|---|---|---|---|
+| BC1 | Textures | 0.83 s | 83.18 | 8.39 s | 82.51 |
+| BC1 | CLIC | 0.54 s | 83.33 | 9.07 s | 82.28 |
+| BC1 | Kodak | | 82.78 | | 80.36 |
+| BC4 | Textures | 0.34 s | 89.30 | 2.43 s | 89.18 |
+| BC7 | Textures | 2.91 s | 89.92 | 112.44 s | 89.42 |
+| BC7 | CLIC | 2.58 s | 91.32 | 116.57 s | 91.50 |
+| BC7 | Kodak | | 92.25 | | 92.70 |
+| BC6H | HDRIs | 0.10 s | 91.06 | 13.17 s | 89.08 |
+| BC6H signed | HDRIs | 0.12 s | 89.41 | 12.95 s | 87.57 |
 
 ### BC1
 
