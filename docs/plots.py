@@ -70,6 +70,15 @@ DATA = {
             ('BCnEncoder.NET fast', 1.8, 89.19),
         ],
     },
+    'BCnEncoder.NET': [
+        ('BC1 Textures', 0.83, 83.18, 8.39, 82.51),
+        ('BC1 CLIC', 0.54, 83.33, 9.07, 82.28),
+        ('BC4 Textures', 0.34, 89.3, 2.43, 89.18),
+        ('BC7 Textures', 2.91, 89.92, 112.44, 89.42),
+        ('BC7 CLIC', 2.58, 91.32, 116.57, 91.5),
+        ('BC6H', 0.1, 91.06, 13.17, 89.08),
+        ('BC6H signed', 0.12, 89.41, 12.95, 87.57),
+    ],
     'BC6H': {
         'Unsigned': [
             ('SharpBcn', 0.1, 91.06),
@@ -192,6 +201,38 @@ def scatter(axis, fmt, panel, points, theme, limits):
     axis.set_ylabel('SSIMULACRA 2, higher is better', color=theme['muted'], fontsize=8.5)
 
 
+def comparison_chart(path, theme):
+    figure, axis = plt.subplots(figsize=(7, 4.2))
+    axis.set_xscale('log')
+    axis.xaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 5)))
+    axis.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f'{value:g}x'))
+    axis.xaxis.set_minor_formatter(NullFormatter())
+    axis.grid(True, color=theme['grid'], linewidth=0.6)
+    axis.set_axisbelow(True)
+    axis.tick_params(colors=theme['muted'], labelsize=8.5)
+
+    for spine in axis.spines.values():
+        spine.set_visible(False)
+
+    axis.axhline(0, color=theme['muted'], linewidth=0.9)
+    axis.annotate('same quality', (4.2, 0), xytext=(0, 4), textcoords='offset points', fontsize=7.5, color=theme['muted'])
+
+    for label, ours, our_quality, theirs, their_quality in DATA['BCnEncoder.NET']:
+        speedup = theirs / ours
+        difference = our_quality - their_quality
+        winner = 'SharpBcn' if difference >= 0 else 'BCnEncoder.NET'
+        axis.scatter([speedup], [difference], s=60, color=color(winner), zorder=3)
+        dx, dy, align = (-8, -4, 'right') if label == 'BC6H signed' else (7, 3, 'left')
+        axis.annotate(label, (speedup, difference), xytext=(dx, dy), textcoords='offset points', ha=align, fontsize=8, color=theme['text'], zorder=4)
+
+    axis.set_xlim(4, 250)
+    axis.set_ylim(-0.6, 2.4)
+    axis.set_title('SharpBcn compared to BCnEncoder.NET', color=theme['text'], fontsize=10.5, loc='left')
+    axis.set_xlabel('How many times faster SharpBcn is, log scale', color=theme['muted'], fontsize=8.5)
+    axis.set_ylabel('SSIMULACRA 2 difference, above 0 is SharpBcn', color=theme['muted'], fontsize=8.5)
+    save(figure, path)
+
+
 def save(figure, path):
     for axis in figure.axes:
         axis.set_facecolor(THEME['background'])
@@ -219,6 +260,8 @@ def main():
 
     for fmt in ('BC1', 'BC4', 'BC7', 'BC6H'):
         scatter_chart(os.path.join(folder, f'{fmt.lower()}.{extension}'), fmt, THEME)
+
+    comparison_chart(os.path.join(folder, f'bcnencoder.{extension}'), THEME)
 
 
 if __name__ == '__main__':

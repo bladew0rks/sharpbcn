@@ -43,6 +43,11 @@ Test images:
 
 Its best quality setting, except BC7 on textures and CLIC, which use fast.
 
+<img alt="Speedup and SSIMULACRA 2 difference of SharpBcn against BCnEncoder.NET" src="docs/bcnencoder.svg">
+
+<details>
+<summary>Numbers</summary>
+
 | Format | Images | SharpBcn time | SharpBcn quality | BCnEncoder.NET time | BCnEncoder.NET quality |
 |---|---|---|---|---|---|
 | BC1 | Textures | 0.83 s | 83.18 | 8.39 s | 82.51 |
@@ -54,6 +59,8 @@ Its best quality setting, except BC7 on textures and CLIC, which use fast.
 | BC7 | Kodak | | 92.25 | | 92.70 |
 | BC6H | HDRIs | 0.10 s | 91.06 | 13.17 s | 89.08 |
 | BC6H signed | HDRIs | 0.12 s | 89.41 | 12.95 s | 87.57 |
+
+</details>
 
 ### BC1
 
