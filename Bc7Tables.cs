@@ -167,4 +167,35 @@ internal static class Bc7Tables
     public static ReadOnlySpan<byte> Weights3 => [0, 9, 18, 27, 37, 46, 55, 64];
 
     public static ReadOnlySpan<byte> Weights4 => [0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64];
+
+    private static readonly byte[] Members2 = BuildMembers(Partitions2, 2);
+    private static readonly byte[] Members3 = BuildMembers(Partitions3, 3);
+
+    public static ReadOnlySpan<byte> SubsetMembers(int subsets, int partition) => subsets == 2 ? Members2.AsSpan(partition * 18, 18) : Members3.AsSpan(partition * 18, 18);
+
+    private static byte[] BuildMembers(ReadOnlySpan<byte> partitions, int subsets)
+    {
+        byte[] members = new byte[64 * 18];
+
+        for (int partition = 0; partition < 64; partition++)
+        {
+            int position = partition * 18;
+
+            for (int subset = 1; subset < subsets; subset++)
+            {
+                int countPosition = position++;
+
+                for (int i = 0; i < 16; i++)
+                {
+                    if (partitions[partition * 16 + i] == subset)
+                    {
+                        members[position++] = (byte)i;
+                        members[countPosition]++;
+                    }
+                }
+            }
+        }
+
+        return members;
+    }
 }
