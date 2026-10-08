@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 
 namespace SharpBcn;
 
@@ -11,18 +12,20 @@ public static class BcDecoder
         BcFormat.Bc3 => DecodeBc3(data, width, height),
         BcFormat.Bc4 => DecodeBc4(data, width, height),
         BcFormat.Bc5 => DecodeBc5(data, width, height),
+        BcFormat.Bc6hUnsigned => MemoryMarshal.AsBytes(DecodeBc6h(data, width, height, false).AsSpan()).ToArray(),
+        BcFormat.Bc6hSigned => MemoryMarshal.AsBytes(DecodeBc6h(data, width, height, true).AsSpan()).ToArray(),
         BcFormat.Bc7 => DecodeBc7(data, width, height),
         _ => throw new ArgumentOutOfRangeException(nameof(format), format, null),
     };
 
     public static byte[] DecodeBc1(ReadOnlySpan<byte> data, int width, int height, bool oneBitAlpha = true)
     {
-        return DecodeBlocks(data, width, height, 8, (block, pixels) => DecodeColorBlock(block, pixels, !oneBitAlpha));
+        return DecodeBlocks<byte>(data, width, height, 8, (block, pixels) => DecodeColorBlock(block, pixels, !oneBitAlpha));
     }
 
     public static byte[] DecodeBc2(ReadOnlySpan<byte> data, int width, int height)
     {
-        return DecodeBlocks(data, width, height, 16, (block, pixels) =>
+        return DecodeBlocks<byte>(data, width, height, 16, (block, pixels) =>
         {
             DecodeColorBlock(block[8..], pixels, true);
 
@@ -36,7 +39,7 @@ public static class BcDecoder
 
     public static byte[] DecodeBc3(ReadOnlySpan<byte> data, int width, int height)
     {
-        return DecodeBlocks(data, width, height, 16, (block, pixels) =>
+        return DecodeBlocks<byte>(data, width, height, 16, (block, pixels) =>
         {
             DecodeColorBlock(block[8..], pixels, true);
             DecodeSingleChannelBlock(block[..8], pixels, 3);
@@ -45,7 +48,7 @@ public static class BcDecoder
 
     public static byte[] DecodeBc4(ReadOnlySpan<byte> data, int width, int height)
     {
-        return DecodeBlocks(data, width, height, 8, (block, pixels) =>
+        return DecodeBlocks<byte>(data, width, height, 8, (block, pixels) =>
         {
             DecodeSingleChannelBlock(block, pixels, 0);
 
@@ -60,7 +63,7 @@ public static class BcDecoder
 
     public static byte[] DecodeBc5(ReadOnlySpan<byte> data, int width, int height)
     {
-        return DecodeBlocks(data, width, height, 16, (block, pixels) =>
+        return DecodeBlocks<byte>(data, width, height, 16, (block, pixels) =>
         {
             DecodeSingleChannelBlock(block[..8], pixels, 0);
             DecodeSingleChannelBlock(block[8..], pixels, 1);
@@ -76,14 +79,19 @@ public static class BcDecoder
         });
     }
 
-    public static byte[] DecodeBc7(ReadOnlySpan<byte> data, int width, int height)
+    public static Half[] DecodeBc6h(ReadOnlySpan<byte> data, int width, int height, bool signed = false)
     {
-        return DecodeBlocks(data, width, height, 16, Bc7Decoder.DecodeBlock);
+        return DecodeBlocks<Half>(data, width, height, 16, (block, pixels) => Bc6hDecoder.DecodeBlock(block, pixels, signed));
     }
 
-    private delegate void BlockDecoder(ReadOnlySpan<byte> block, Span<byte> pixels);
+    public static byte[] DecodeBc7(ReadOnlySpan<byte> data, int width, int height)
+    {
+        return DecodeBlocks<byte>(data, width, height, 16, Bc7Decoder.DecodeBlock);
+    }
 
-    private static unsafe byte[] DecodeBlocks(ReadOnlySpan<byte> data, int width, int height, int blockSize, BlockDecoder decoder)
+    private delegate void BlockDecoder<T>(ReadOnlySpan<byte> block, Span<T> pixels);
+
+    private static unsafe T[] DecodeBlocks<T>(ReadOnlySpan<byte> data, int width, int height, int blockSize, BlockDecoder<T> decoder) where T : unmanaged
     {
         int blocksX = Math.Max(1, (width + 3) / 4);
         int blocksY = Math.Max(1, (height + 3) / 4);
@@ -93,7 +101,7 @@ public static class BcDecoder
             throw new ArgumentException("Compressed buffer is too small for the image dimensions.", nameof(data));
         }
 
-        byte[] output = new byte[width * height * 4];
+        T[] output = new T[width * height * 4];
 
         fixed (byte* dataPtr = data)
         {
@@ -103,7 +111,7 @@ public static class BcDecoder
             void DecodeRow(int by)
             {
                 ReadOnlySpan<byte> src = new ReadOnlySpan<byte>((void*)source, sourceLength);
-                Span<byte> pixels = stackalloc byte[64];
+                Span<T> pixels = stackalloc T[64];
 
                 for (int bx = 0; bx < blocksX; bx++)
                 {
