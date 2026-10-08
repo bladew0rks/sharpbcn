@@ -65,9 +65,10 @@ Measurements:
 ### SharpBcn and BCnEncoder.NET
 
 The other pure .NET encoder, at its best quality, except BC7 on the textures and CLIC, which use its fast setting because best quality takes too long there.
-Quality is SSIMULACRA 2, with BC6H scored as described in its section below.
+The left chart compares speed, the right one the SSIMULACRA 2 difference, with BC6H scored as described in its section below.
+SharpBcn is 7 to 130 times faster, and BCnEncoder.NET scores higher on BC7 for photos.
 
-<img alt="Encode time of SharpBcn and BCnEncoder.NET per format" src="docs/bcnencoder.svg">
+<img alt="Encode time and SSIMULACRA 2 difference of SharpBcn and BCnEncoder.NET per format" src="docs/bcnencoder.svg">
 
 <details>
 <summary>Numbers</summary>

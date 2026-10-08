@@ -203,23 +203,39 @@ def scatter(axis, fmt, panel, points, theme, limits):
 
 def speed_chart(path, theme):
     rows = DATA['BCnEncoder.NET']
-    figure, axis = plt.subplots(figsize=(9, 4.2))
-    style(axis, theme)
-    axis.grid(True, axis='x', color=theme['grid'], linewidth=0.6)
-    axis.grid(False, axis='y')
+    figure, (times, quality) = plt.subplots(1, 2, figsize=(10, 4.4), sharey=True, gridspec_kw={'width_ratios': [3, 2]})
+    style(times, theme, wide=True)
+    times.grid(False, axis='y')
+    quality.grid(True, axis='x', color=theme['grid'], linewidth=0.6)
+    quality.set_axisbelow(True)
+    quality.tick_params(colors=theme['muted'], labelsize=8.5)
+    quality.tick_params(axis='y', length=0)
+
+    for spine in quality.spines.values():
+        spine.set_visible(False)
 
     for i, (label, ours, our_quality, theirs, their_quality) in enumerate(rows):
         y = len(rows) - 1 - i
-        axis.barh(y + 0.19, ours, height=0.36, color=color('SharpBcn'))
-        axis.barh(y - 0.19, theirs, height=0.36, color=color('BCnEncoder.NET'))
-        axis.annotate(f'{ours:g} s, {our_quality:g}', (ours, y + 0.19), xytext=(5, 0), textcoords='offset points', va='center', fontsize=7.5, color=theme['muted'])
-        axis.annotate(f'{theirs:g} s, {their_quality:g}', (theirs, y - 0.19), xytext=(5, 0), textcoords='offset points', va='center', fontsize=7.5, color=theme['muted'])
+        times.barh(y + 0.19, ours, height=0.36, color=color('SharpBcn'))
+        times.barh(y - 0.19, theirs, height=0.36, color=color('BCnEncoder.NET'))
+        times.annotate(f'{ours:g} s', (ours, y + 0.19), xytext=(5, 0), textcoords='offset points', va='center', fontsize=7.5, color=theme['muted'])
+        times.annotate(f'{theirs:g} s', (theirs, y - 0.19), xytext=(5, 0), textcoords='offset points', va='center', fontsize=7.5, color=theme['muted'])
+        difference = our_quality - their_quality
+        winner = 'SharpBcn' if difference >= 0 else 'BCnEncoder.NET'
+        quality.barh(y, difference, height=0.5, color=color(winner))
+        quality.annotate(f'{difference:+.2f}', (difference, y), xytext=(5 if difference >= 0 else -5, 0), textcoords='offset points',
+                         ha='left' if difference >= 0 else 'right', va='center', fontsize=7.5, color=theme['muted'])
 
-    axis.set_yticks(range(len(rows)), [r[0] for r in reversed(rows)], color=theme['text'], fontsize=8.5)
-    axis.set_xlim(0.05, 600)
-    axis.set_xlabel('Time, log scale (labels show time and SSIMULACRA 2)', color=theme['muted'], fontsize=8.5)
+    times.set_yticks(range(len(rows)), [r[0] for r in reversed(rows)], color=theme['text'], fontsize=8.5)
+    times.set_xlim(0.05, 600)
+    times.set_title('Speed: encode time, log scale', color=theme['text'], fontsize=10, loc='left')
     handles = [plt.Rectangle((0, 0), 1, 1, color=color(n)) for n in ('SharpBcn', 'BCnEncoder.NET')]
-    axis.legend(handles, ['SharpBcn', 'BCnEncoder.NET'], frameon=False, labelcolor=theme['text'], fontsize=8.5, loc='lower right')
+    times.legend(handles, ['SharpBcn', 'BCnEncoder.NET'], frameon=False, labelcolor=theme['text'], fontsize=8.5, loc='upper right')
+    limit = max(abs(r[2] - r[4]) for r in rows) * 1.35
+    quality.set_xlim(-limit, limit)
+    quality.axvline(0, color=theme['muted'], linewidth=0.8)
+    quality.set_title('Quality: SSIMULACRA 2 difference', color=theme['text'], fontsize=10, loc='left')
+    quality.set_xlabel('\u2190 BCnEncoder.NET higher    SharpBcn higher \u2192', color=theme['muted'], fontsize=8.5)
     save(figure, path)
 
 
