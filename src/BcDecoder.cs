@@ -157,7 +157,7 @@ public static class BcDecoder
         return output;
     }
 
-    private static void DecodeColorBlock(ReadOnlySpan<byte> block, Span<byte> pixels, bool forceFourColor)
+    internal static void DecodeColorBlock(ReadOnlySpan<byte> block, Span<byte> pixels, bool forceFourColor)
     {
         int c0 = BinaryPrimitives.ReadUInt16LittleEndian(block);
         int c1 = BinaryPrimitives.ReadUInt16LittleEndian(block[2..]);
@@ -211,7 +211,7 @@ public static class BcDecoder
         rgba[3] = 255;
     }
 
-    private static void DecodeSingleChannelBlock(ReadOnlySpan<byte> block, Span<byte> pixels, int channel)
+    internal static void DecodeSingleChannelBlock(ReadOnlySpan<byte> block, Span<byte> pixels, int channel)
     {
         int a0 = block[0];
         int a1 = block[1];
@@ -444,11 +444,10 @@ public static class BcDecoder
         new(2, 6, 0, 0, 5, 5, 1, 0, 2, 0),
     ];
 
-    private ref struct BitReader(ReadOnlySpan<byte> block)
+    private struct BitReader(ReadOnlySpan<byte> block)
     {
-        private readonly ulong low = BinaryPrimitives.ReadUInt64LittleEndian(block);
-        private readonly ulong high = BinaryPrimitives.ReadUInt64LittleEndian(block[8..]);
-        private int position;
+        private ulong low = BinaryPrimitives.ReadUInt64LittleEndian(block);
+        private ulong high = BinaryPrimitives.ReadUInt64LittleEndian(block[8..]);
 
         public int Read(int count)
         {
@@ -457,9 +456,10 @@ public static class BcDecoder
                 return 0;
             }
 
-            ulong value = position >= 64 ? high >> (position - 64) : (low >> position) | (position == 0 ? 0 : high << (64 - position));
-            position += count;
-            return (int)(value & ((1UL << count) - 1));
+            int value = (int)(low & ((1UL << count) - 1));
+            low = (low >> count) | (high << (64 - count));
+            high >>= count;
+            return value;
         }
     }
 
@@ -493,12 +493,7 @@ public static class BcDecoder
 
     public static void DecodeBc7Block(ReadOnlySpan<byte> block, Span<byte> pixels)
     {
-        int mode = 0;
-
-        while (mode < 8 && (block[0] & (1 << mode)) == 0)
-        {
-            mode++;
-        }
+        int mode = System.Numerics.BitOperations.TrailingZeroCount(block[0] | 0x100);
 
         if (mode == 8)
         {
@@ -506,7 +501,7 @@ public static class BcDecoder
             return;
         }
 
-        Bc7ModeInfo info = Bc7Modes[mode];
+        ref readonly Bc7ModeInfo info = ref Bc7Modes[mode];
         BitReader bits = new BitReader(block);
         bits.Read(mode + 1);
         int partition = bits.Read(info.PartitionBits);
@@ -558,51 +553,55 @@ public static class BcDecoder
             }
         }
 
-        Span<int> primary = stackalloc int[16];
-        Span<int> secondary = stackalloc int[16];
+        ReadOnlySpan<byte> subsets = info.Subsets switch
+        {
+            2 => Bc7Tables.Partitions2.Slice(partition * 16, 16),
+            3 => Bc7Tables.Partitions3.Slice(partition * 16, 16),
+            _ => Bc7Tables.Partitions2[..16],
+        };
+
+        int anchor1 = info.Subsets switch
+        {
+            2 => Bc7Tables.AnchorSecondSubset[partition],
+            3 => Bc7Tables.AnchorThirdSubsetFirst[partition],
+            _ => -1,
+        };
+
+        int anchor2 = info.Subsets == 3 ? Bc7Tables.AnchorThirdSubsetSecond[partition] : -1;
+        Span<byte> primary = stackalloc byte[16];
+        Span<byte> secondary = stackalloc byte[16];
 
         for (int i = 0; i < 16; i++)
         {
-            primary[i] = bits.Read(info.IndexBits - (Bc7IsAnchor(info.Subsets, partition, i) ? 1 : 0));
+            primary[i] = (byte)bits.Read(info.IndexBits - (i == 0 || i == anchor1 || i == anchor2 ? 1 : 0));
         }
 
         if (info.SecondaryIndexBits != 0)
         {
             for (int i = 0; i < 16; i++)
             {
-                secondary[i] = bits.Read(info.SecondaryIndexBits - (i == 0 ? 1 : 0));
+                secondary[i] = (byte)bits.Read(info.SecondaryIndexBits - (i == 0 ? 1 : 0));
             }
         }
 
+        bool alphaFromSecondary = info.SecondaryIndexBits != 0 && indexSelection == 0;
+        bool colorFromSecondary = info.SecondaryIndexBits != 0 && indexSelection != 0;
+        ReadOnlySpan<byte> colorIndices = colorFromSecondary ? secondary : primary;
+        ReadOnlySpan<byte> alphaIndices = alphaFromSecondary ? secondary : primary;
+        ReadOnlySpan<byte> colorWeights = Bc7Weights(colorFromSecondary ? info.SecondaryIndexBits : info.IndexBits);
+        ReadOnlySpan<byte> alphaWeights = Bc7Weights(alphaFromSecondary ? info.SecondaryIndexBits : info.IndexBits);
+        bool oneSubset = info.Subsets == 1;
+
         for (int i = 0; i < 16; i++)
         {
-            int subset = Bc7Subset(info.Subsets, partition, i);
-            int e0 = subset * 2 * 4, e1 = e0 + 4;
-            int colorIndex = primary[i], colorBits = info.IndexBits;
-            int alphaIndex = primary[i], alphaBits = info.IndexBits;
-
-            if (info.SecondaryIndexBits != 0)
-            {
-                if (indexSelection == 0)
-                {
-                    alphaIndex = secondary[i];
-                    alphaBits = info.SecondaryIndexBits;
-                }
-                else
-                {
-                    colorIndex = secondary[i];
-                    colorBits = info.SecondaryIndexBits;
-                }
-            }
-
+            int e0 = oneSubset ? 0 : subsets[i] * 8;
+            int wc = colorWeights[colorIndices[i]];
+            int wa = alphaWeights[alphaIndices[i]];
             Span<byte> pixel = pixels.Slice(i * 4, 4);
-
-            for (int channel = 0; channel < 3; channel++)
-            {
-                pixel[channel] = (byte)Bc7Interpolate(endpoints[e0 + channel], endpoints[e1 + channel], colorIndex, colorBits);
-            }
-
-            pixel[3] = (byte)Bc7Interpolate(endpoints[e0 + 3], endpoints[e1 + 3], alphaIndex, alphaBits);
+            pixel[0] = (byte)(((64 - wc) * endpoints[e0] + wc * endpoints[e0 + 4] + 32) >> 6);
+            pixel[1] = (byte)(((64 - wc) * endpoints[e0 + 1] + wc * endpoints[e0 + 5] + 32) >> 6);
+            pixel[2] = (byte)(((64 - wc) * endpoints[e0 + 2] + wc * endpoints[e0 + 6] + 32) >> 6);
+            pixel[3] = (byte)(((64 - wa) * endpoints[e0 + 3] + wa * endpoints[e0 + 7] + 32) >> 6);
 
             if (rotation != 0)
             {
@@ -610,6 +609,13 @@ public static class BcDecoder
             }
         }
     }
+
+    private static ReadOnlySpan<byte> Bc7Weights(int bits) => bits switch
+    {
+        2 => Bc7Tables.Weights2,
+        3 => Bc7Tables.Weights3,
+        _ => Bc7Tables.Weights4,
+    };
 
     #endregion
 }
