@@ -5,6 +5,7 @@ Fast, high quality BC1–BC7 texture compression for .NET, written in plain C#.
 - BC1 (with optional 1-bit alpha), BC2, BC3, BC4, BC5, BC6H (unsigned and signed) and BC7
 - AVX-512 and AVX2, with a fallback for other CPUs that gives the same output
 - Multithreaded, no native dependencies
+- Optional rate-distortion optimization (RDO) so the output compresses better with zstd, deflate or LZMA
 
 ## Usage
 
@@ -27,6 +28,28 @@ Half[] hdrBack = BcDecoder.DecodeBc6h(bc6h, width, height, signed: false);
 ```
 
 `BcFormat.Bc1Alpha` makes pixels below `alphaThreshold` (default 128) transparent.
+
+## RDO
+
+`BcRdo.Optimize` rewrites already encoded blocks so they repeat byte runs from nearby blocks, trading a little quality for a much smaller file once it's compressed with zstd, deflate or LZMA.
+It's a port of the entropy reduction transform from [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo), works on every format except BC6H, and gives the same output regardless of thread count or SIMD width.
+
+```csharp
+byte[] bc7 = BcEncoder.EncodeBc7(rgba, width, height);
+BcRdo.Optimize(BcFormat.Bc7, rgba, width, height, bc7, lambda: 0.5f);
+```
+
+Higher `lambda` means smaller files and lower quality, around 0.1 to 4 is useful. A 2048×2048 BC7 albedo texture with zstd level 6:
+
+| Lambda | PSNR | Compressed size | RDO time |
+|---|---|---|---|
+| 0 | 59.18 dB | 1661 KiB | |
+| 0.1 | 51.38 dB | 1103 KiB | 1.41 s |
+| 0.5 | 47.32 dB | 811 KiB | 0.99 s |
+| 1 | 45.73 dB | 740 KiB | 0.88 s |
+| 4 | 43.03 dB | 588 KiB | 0.66 s |
+
+Normal maps lose more per lambda (40.68 dB at 0.5 on the matching normal map), so use a lower value for them.
 
 ## Performance
 

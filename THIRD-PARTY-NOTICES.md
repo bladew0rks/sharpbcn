@@ -4,8 +4,9 @@
 `g_best_total_orderings4`) from rgbcx, part of [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo),
 used under its MIT license.
 
-`src/Bc7Tables.cs` contains the BC7 partition, anchor and weight tables from bc7decomp, also part of
-bc7enc_rdo, used under the same MIT license:
+`src/Bc7Tables.cs` contains the BC7 partition, anchor and weight tables from bc7decomp, and `src/BcRdo.cs` is
+a port of the entropy reduction transform (ert.cpp) and smooth block handling from bc7enc_rdo, both used under
+the same MIT license:
 
 ```
 Copyright(c) 2020-2021 Richard Geldreich, Jr.
