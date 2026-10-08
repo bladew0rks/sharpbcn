@@ -43,7 +43,7 @@ Test images:
 
 Its best quality setting, except BC7 on textures and CLIC, which use fast.
 
-<img alt="Speedup and SSIMULACRA 2 difference of SharpBcn against BCnEncoder.NET" src="docs/bcnencoder.svg">
+<img alt="Encode time against SSIMULACRA 2 for SharpBcn and BCnEncoder.NET, per format" src="docs/bcnencoder.svg">
 
 <details>
 <summary>Numbers</summary>

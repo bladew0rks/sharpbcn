@@ -70,15 +70,6 @@ DATA = {
             ('BCnEncoder.NET fast', 1.8, 89.19),
         ],
     },
-    'BCnEncoder.NET': [
-        ('BC1 Textures', 0.83, 83.18, 8.39, 82.51),
-        ('BC1 CLIC', 0.54, 83.33, 9.07, 82.28),
-        ('BC4 Textures', 0.34, 89.3, 2.43, 89.18),
-        ('BC7 Textures', 2.91, 89.92, 112.44, 89.42),
-        ('BC7 CLIC', 2.58, 91.32, 116.57, 91.5),
-        ('BC6H', 0.1, 91.06, 13.17, 89.08),
-        ('BC6H signed', 0.12, 89.41, 12.95, 87.57),
-    ],
     'BC6H': {
         'Unsigned': [
             ('SharpBcn', 0.1, 91.06),
@@ -201,35 +192,53 @@ def scatter(axis, fmt, panel, points, theme, limits):
     axis.set_ylabel('SSIMULACRA 2, higher is better', color=theme['muted'], fontsize=8.5)
 
 
+COMPARISONS = [
+    ('BC1', 'Textures', 'BC1, textures'),
+    ('BC1', 'CLIC', 'BC1, CLIC'),
+    ('BC4', 'Textures', 'BC4, textures'),
+    ('BC7', 'Textures', 'BC7, textures'),
+    ('BC7', 'CLIC', 'BC7, CLIC'),
+    ('BC6H', 'Unsigned', 'BC6H'),
+    ('BC6H', 'Signed', 'BC6H signed'),
+]
+
+
 def comparison_chart(path, theme):
-    figure, axis = plt.subplots(figsize=(7, 4.2))
-    axis.set_xscale('log')
-    axis.xaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 5)))
-    axis.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f'{value:g}x'))
-    axis.xaxis.set_minor_formatter(NullFormatter())
-    axis.grid(True, color=theme['grid'], linewidth=0.6)
-    axis.set_axisbelow(True)
-    axis.tick_params(colors=theme['muted'], labelsize=8.5)
+    figure, axes = plt.subplots(2, 4, figsize=(11, 5.4))
 
-    for spine in axis.spines.values():
-        spine.set_visible(False)
+    for axis, (fmt, panel, title) in zip(axes.flat, COMPARISONS):
+        points = DATA[fmt][panel]
+        ours = next(p for p in points if p[0] == 'SharpBcn')
+        theirs = sorted((p for p in points if p[0].startswith('BCnEncoder.NET')), key=lambda p: p[1])
+        times = [ours[1]] + [p[1] for p in theirs]
+        qualities = [ours[2]] + [p[2] for p in theirs]
+        style(axis, theme, wide=True)
+        axis.xaxis.set_major_formatter(FuncFormatter(seconds))
+        axis.plot([p[1] for p in theirs], [p[2] for p in theirs], color=color('BCnEncoder.NET'), linewidth=1, zorder=2)
 
-    axis.axhline(0, color=theme['muted'], linewidth=0.9)
-    axis.annotate('same quality', (4.2, 0), xytext=(0, 4), textcoords='offset points', fontsize=7.5, color=theme['muted'])
+        for k, (name, time, quality) in enumerate(theirs):
+            crowded = k > 0 and time / theirs[k - 1][1] < 1.3 and quality < theirs[k - 1][2]
+            axis.scatter([time], [quality], s=36, color=color('BCnEncoder.NET'), zorder=3)
+            axis.annotate(name.split()[-1], (time, quality), xytext=(0, -13 if crowded else 7), textcoords='offset points', ha='center', fontsize=7.5,
+                          color=theme['muted'])
 
-    for label, ours, our_quality, theirs, their_quality in DATA['BCnEncoder.NET']:
-        speedup = theirs / ours
-        difference = our_quality - their_quality
-        winner = 'SharpBcn' if difference >= 0 else 'BCnEncoder.NET'
-        axis.scatter([speedup], [difference], s=60, color=color(winner), zorder=3)
-        dx, dy, align = (-8, -4, 'right') if label == 'BC6H signed' else (7, 3, 'left')
-        axis.annotate(label, (speedup, difference), xytext=(dx, dy), textcoords='offset points', ha=align, fontsize=8, color=theme['text'], zorder=4)
+        axis.scatter([ours[1]], [ours[2]], s=80, color=color('SharpBcn'), edgecolors=theme['text'], linewidths=0.8, zorder=4)
+        axis.annotate('SharpBcn', (ours[1], ours[2]), xytext=(0, 8), textcoords='offset points', ha='center', fontsize=8, fontweight='bold', color=theme['text'])
+        spread = max(qualities) - min(qualities)
+        axis.set_xlim(min(times) / 3, max(times) * 3)
+        axis.set_ylim(min(qualities) - spread * 0.25 - 0.1, max(qualities) + spread * 0.35 + 0.2)
+        axis.set_title(title, color=theme['text'], fontsize=10, loc='left')
 
-    axis.set_xlim(4, 250)
-    axis.set_ylim(-0.6, 2.4)
-    axis.set_title('SharpBcn compared to BCnEncoder.NET', color=theme['text'], fontsize=10.5, loc='left')
-    axis.set_xlabel('How many times faster SharpBcn is, log scale', color=theme['muted'], fontsize=8.5)
-    axis.set_ylabel('SSIMULACRA 2 difference, above 0 is SharpBcn', color=theme['muted'], fontsize=8.5)
+    legend = axes.flat[-1]
+    legend.axis('off')
+    legend.scatter([0.1], [0.72], s=80, color=color('SharpBcn'), edgecolors=theme['text'], linewidths=0.8)
+    legend.text(0.2, 0.72, 'SharpBcn', va='center', fontsize=9, color=theme['text'])
+    legend.plot([0.04, 0.16], [0.52, 0.52], color=color('BCnEncoder.NET'), linewidth=1)
+    legend.scatter([0.1], [0.52], s=36, color=color('BCnEncoder.NET'))
+    legend.text(0.2, 0.52, 'BCnEncoder.NET levels', va='center', fontsize=9, color=theme['text'])
+    legend.text(0.04, 0.28, 'Across: time, log scale\nUp: SSIMULACRA 2, higher is better', va='center', fontsize=8.5, color=theme['muted'])
+    legend.set_xlim(0, 1)
+    legend.set_ylim(0, 1)
     save(figure, path)
 
 
