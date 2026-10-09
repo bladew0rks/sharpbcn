@@ -22,16 +22,18 @@ public static class BcEncoder
         return blocksX * blocksY * blockSize;
     }
 
-    public static byte[] EncodeBc1(ReadOnlySpan<byte> rgba, int width, int height, int alphaThreshold = 0, bool parallel = true)
+    public static byte[] EncodeBc1(ReadOnlySpan<byte> rgba, int width, int height, int alphaThreshold = 0, bool parallel = true, bool perceptual = false)
     {
         byte[] output = GC.AllocateUninitializedArray<byte>(GetCompressedSize(width, height, 8));
-        EncodeBlocks<Bc1Block>(rgba, width, height, output, alphaThreshold, parallel, PreferredSimdWidth);
+        EncodeBlocks<Bc1Block>(rgba, width, height, output, alphaThreshold, parallel, PreferredSimdWidth, perceptual);
         return output;
     }
 
-    public static byte[] EncodeBc2(ReadOnlySpan<byte> rgba, int width, int height, bool parallel = true) => Encode(BcFormat.Bc2, rgba, width, height, parallel: parallel);
+    public static byte[] EncodeBc2(ReadOnlySpan<byte> rgba, int width, int height, bool parallel = true, bool perceptual = false) =>
+        Encode(BcFormat.Bc2, rgba, width, height, parallel: parallel, perceptual: perceptual);
 
-    public static byte[] EncodeBc3(ReadOnlySpan<byte> rgba, int width, int height, bool parallel = true) => Encode(BcFormat.Bc3, rgba, width, height, parallel: parallel);
+    public static byte[] EncodeBc3(ReadOnlySpan<byte> rgba, int width, int height, bool parallel = true, bool perceptual = false) =>
+        Encode(BcFormat.Bc3, rgba, width, height, parallel: parallel, perceptual: perceptual);
 
     public static byte[] EncodeBc4(ReadOnlySpan<byte> rgba, int width, int height, bool parallel = true) => Encode(BcFormat.Bc4, rgba, width, height, parallel: parallel);
 
@@ -40,47 +42,48 @@ public static class BcEncoder
     public static byte[] EncodeBc6h(ReadOnlySpan<Half> rgba, int width, int height, bool signed = false, bool parallel = true) =>
         Encode(signed ? BcFormat.Bc6hSigned : BcFormat.Bc6hUnsigned, MemoryMarshal.AsBytes(rgba), width, height, parallel: parallel);
 
-    public static byte[] EncodeBc7(ReadOnlySpan<byte> rgba, int width, int height, bool parallel = true) => Encode(BcFormat.Bc7, rgba, width, height, parallel: parallel);
+    public static byte[] EncodeBc7(ReadOnlySpan<byte> rgba, int width, int height, bool parallel = true, bool perceptual = false) =>
+        Encode(BcFormat.Bc7, rgba, width, height, parallel: parallel, perceptual: perceptual);
 
-    public static byte[] Encode(BcFormat format, ReadOnlySpan<byte> rgba, int width, int height, int alphaThreshold = 128, bool parallel = true)
+    public static byte[] Encode(BcFormat format, ReadOnlySpan<byte> rgba, int width, int height, int alphaThreshold = 128, bool parallel = true, bool perceptual = false)
     {
         byte[] output = GC.AllocateUninitializedArray<byte>(GetCompressedSize(width, height, format));
-        Encode(format, rgba, width, height, output, alphaThreshold, parallel);
+        Encode(format, rgba, width, height, output, alphaThreshold, parallel, perceptual);
         return output;
     }
 
-    public static void Encode(BcFormat format, ReadOnlySpan<byte> rgba, int width, int height, Span<byte> output, int alphaThreshold = 128, bool parallel = true)
+    public static void Encode(BcFormat format, ReadOnlySpan<byte> rgba, int width, int height, Span<byte> output, int alphaThreshold = 128, bool parallel = true, bool perceptual = false)
     {
         int simdWidth = PreferredSimdWidth;
 
         switch (format)
         {
             case BcFormat.Bc1:
-                EncodeBlocks<Bc1Block>(rgba, width, height, output, 0, parallel, simdWidth);
+                EncodeBlocks<Bc1Block>(rgba, width, height, output, 0, parallel, simdWidth, perceptual);
                 break;
             case BcFormat.Bc1Alpha:
-                EncodeBlocks<Bc1Block>(rgba, width, height, output, Math.Max(1, alphaThreshold), parallel, simdWidth);
+                EncodeBlocks<Bc1Block>(rgba, width, height, output, Math.Max(1, alphaThreshold), parallel, simdWidth, perceptual);
                 break;
             case BcFormat.Bc2:
-                EncodeBlocks<Bc2Block>(rgba, width, height, output, 0, parallel, simdWidth);
+                EncodeBlocks<Bc2Block>(rgba, width, height, output, 0, parallel, simdWidth, perceptual);
                 break;
             case BcFormat.Bc3:
-                EncodeBlocks<Bc3Block>(rgba, width, height, output, 0, parallel, simdWidth);
+                EncodeBlocks<Bc3Block>(rgba, width, height, output, 0, parallel, simdWidth, perceptual);
                 break;
             case BcFormat.Bc4:
-                EncodeBlocks<Bc4Block>(rgba, width, height, output, 0, parallel, simdWidth);
+                EncodeBlocks<Bc4Block>(rgba, width, height, output, 0, parallel, simdWidth, perceptual);
                 break;
             case BcFormat.Bc5:
-                EncodeBlocks<Bc5Block>(rgba, width, height, output, 0, parallel, simdWidth);
+                EncodeBlocks<Bc5Block>(rgba, width, height, output, 0, parallel, simdWidth, perceptual);
                 break;
             case BcFormat.Bc6hUnsigned:
-                EncodeBlocks<Bc6hUnsignedBlock>(rgba, width, height, output, 0, parallel, simdWidth);
+                EncodeBlocks<Bc6hUnsignedBlock>(rgba, width, height, output, 0, parallel, simdWidth, perceptual);
                 break;
             case BcFormat.Bc6hSigned:
-                EncodeBlocks<Bc6hSignedBlock>(rgba, width, height, output, 0, parallel, simdWidth);
+                EncodeBlocks<Bc6hSignedBlock>(rgba, width, height, output, 0, parallel, simdWidth, perceptual);
                 break;
             case BcFormat.Bc7:
-                EncodeBlocks<Bc7Block>(rgba, width, height, output, 0, parallel, simdWidth);
+                EncodeBlocks<Bc7Block>(rgba, width, height, output, 0, parallel, simdWidth, perceptual);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(format), format, null);
@@ -161,7 +164,7 @@ public static class BcEncoder
     {
         public static int BlockSize => 16;
         public static BlockKind Kind => BlockKind.Bc7;
-        public static void Encode(ReadOnlySpan<byte> block, Span<byte> dest, int alphaThreshold) => BcEncoderSimd128.EncodeRow(Kind, block, 4, 4, 0, 1, dest, 0);
+        public static void Encode(ReadOnlySpan<byte> block, Span<byte> dest, int alphaThreshold) => BcEncoderSimd128.EncodeRow(Kind, block, 4, 4, 0, 1, dest, 0, false);
     }
 
     private struct Bc6hUnsignedBlock : IBlockEncoder
@@ -169,7 +172,7 @@ public static class BcEncoder
         public static int BlockSize => 16;
         public static BlockKind Kind => BlockKind.Bc6hUnsigned;
         public static int BytesPerPixel => 8;
-        public static void Encode(ReadOnlySpan<byte> block, Span<byte> dest, int alphaThreshold) => BcEncoderSimd128.EncodeRow(Kind, block, 4, 4, 0, 1, dest, 0);
+        public static void Encode(ReadOnlySpan<byte> block, Span<byte> dest, int alphaThreshold) => BcEncoderSimd128.EncodeRow(Kind, block, 4, 4, 0, 1, dest, 0, false);
     }
 
     private struct Bc6hSignedBlock : IBlockEncoder
@@ -177,12 +180,12 @@ public static class BcEncoder
         public static int BlockSize => 16;
         public static BlockKind Kind => BlockKind.Bc6hSigned;
         public static int BytesPerPixel => 8;
-        public static void Encode(ReadOnlySpan<byte> block, Span<byte> dest, int alphaThreshold) => BcEncoderSimd128.EncodeRow(Kind, block, 4, 4, 0, 1, dest, 0);
+        public static void Encode(ReadOnlySpan<byte> block, Span<byte> dest, int alphaThreshold) => BcEncoderSimd128.EncodeRow(Kind, block, 4, 4, 0, 1, dest, 0, false);
     }
 
     private static int PreferredSimdWidth => BcEncoderSimd512.IsSupported ? 512 : BcEncoderSimd.IsSupported ? 256 : 0;
 
-    private static unsafe void EncodeBlocks<T>(ReadOnlySpan<byte> rgba, int width, int height, Span<byte> output, int alphaThreshold, bool parallel, int simdWidth)
+    private static unsafe void EncodeBlocks<T>(ReadOnlySpan<byte> rgba, int width, int height, Span<byte> output, int alphaThreshold, bool parallel, int simdWidth, bool perceptual)
         where T : struct, IBlockEncoder
     {
         if (rgba.Length < width * height * T.BytesPerPixel)
@@ -213,19 +216,19 @@ public static class BcEncoder
 
                 if (simdWidth == 512)
                 {
-                    BcEncoderSimd512.EncodeRow(T.Kind, src, width, height, by, blocksX, row, alphaThreshold);
+                    BcEncoderSimd512.EncodeRow(T.Kind, src, width, height, by, blocksX, row, alphaThreshold, perceptual);
                     return;
                 }
 
                 if (simdWidth == 256)
                 {
-                    BcEncoderSimd.EncodeRow(T.Kind, src, width, height, by, blocksX, row, alphaThreshold);
+                    BcEncoderSimd.EncodeRow(T.Kind, src, width, height, by, blocksX, row, alphaThreshold, perceptual);
                     return;
                 }
 
-                if (T.Kind is BlockKind.Bc6hUnsigned or BlockKind.Bc6hSigned or BlockKind.Bc7)
+                if (T.Kind is BlockKind.Bc6hUnsigned or BlockKind.Bc6hSigned or BlockKind.Bc7 || perceptual && T.Kind is BlockKind.Bc1 or BlockKind.Bc2 or BlockKind.Bc3)
                 {
-                    BcEncoderSimd128.EncodeRow(T.Kind, src, width, height, by, blocksX, row, alphaThreshold);
+                    BcEncoderSimd128.EncodeRow(T.Kind, src, width, height, by, blocksX, row, alphaThreshold, perceptual);
                     return;
                 }
 

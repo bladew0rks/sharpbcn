@@ -13,11 +13,12 @@ internal static class BcEncoderSimd
     public static bool IsSupported => Vector256.IsHardwareAccelerated;
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    public static void EncodeRow(BcEncoder.BlockKind kind, ReadOnlySpan<byte> src, int width, int height, int by, int blocksX, Span<byte> row, int alphaThreshold)
+    public static void EncodeRow(BcEncoder.BlockKind kind, ReadOnlySpan<byte> src, int width, int height, int by, int blocksX, Span<byte> row, int alphaThreshold,
+        bool perceptual)
     {
         if (kind == BcEncoder.BlockKind.Bc7)
         {
-            EncodeBc7Row(src, width, height, by, blocksX, row);
+            EncodeBc7Row(src, width, height, by, blocksX, row, perceptual);
             return;
         }
 
@@ -58,7 +59,7 @@ internal static class BcEncoderSimd
             switch (kind)
             {
                 case BcEncoder.BlockKind.Bc1:
-                    WriteColorBlocks(blocks, r, g, b, count, dest, 8);
+                    WriteColorBlocks(blocks, r, g, b, count, dest, 8, perceptual);
 
                     if (alphaThreshold > 0)
                     {
@@ -83,11 +84,11 @@ internal static class BcEncoderSimd
                         BcEncoder.CompressExplicitAlphaBlock(blocks.Slice(lane * 64, 64), dest.Slice(lane * 16, 8));
                     }
 
-                    WriteColorBlocks(blocks, r, g, b, count, dest[8..], 16);
+                    WriteColorBlocks(blocks, r, g, b, count, dest[8..], 16, perceptual);
                     break;
                 case BcEncoder.BlockKind.Bc3:
                     EncodeSingleChannel(a, count, dest, 16);
-                    WriteColorBlocks(blocks, r, g, b, count, dest[8..], 16);
+                    WriteColorBlocks(blocks, r, g, b, count, dest[8..], 16, perceptual);
                     break;
                 case BcEncoder.BlockKind.Bc4:
                     EncodeSingleChannel(r, count, dest, 8);
@@ -103,6 +104,22 @@ internal static class BcEncoderSimd
     private struct Endpoints
     {
         public Vector256<int> R0, G0, B0, R1, G1, B1;
+    }
+
+    private interface IColorMetric
+    {
+        static abstract Vector256<int> Weigh(Vector256<int> red, Vector256<int> green, Vector256<int> blue);
+    }
+
+    private struct UniformColorMetric : IColorMetric
+    {
+        public static Vector256<int> Weigh(Vector256<int> red, Vector256<int> green, Vector256<int> blue) => red + green + blue;
+    }
+
+    private struct PerceptualColorMetric : IColorMetric
+    {
+        public static Vector256<int> Weigh(Vector256<int> red, Vector256<int> green, Vector256<int> blue) =>
+            Vector256.Create(3) * red + Vector256.Create(6) * green + blue;
     }
 
     private static ulong TransparentLanes(ReadOnlySpan<Vector256<int>> a, int alphaThreshold)
@@ -171,20 +188,22 @@ internal static class BcEncoderSimd
     #region Color
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    public static void EncodeColor(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static void EncodeColor<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         Span<int> color0, Span<int> color1, Span<uint> masks)
+        where TMetric : struct, IColorMetric
     {
         Span<Vector256<int>> bestIndices = stackalloc Vector256<int>[16];
-        Vector256<int> bestError = FitBestCandidate(r, g, b, bestIndices, out Endpoints best);
-        ApplyClusterFit(r, g, b, bestIndices, ref best, ref bestError);
-        SearchColorEndpoints(r, g, b, ref best, ref bestError);
-        MatchFourColor(r, g, b, best, bestIndices);
+        Vector256<int> bestError = FitBestCandidate<TMetric>(r, g, b, bestIndices, out Endpoints best);
+        ApplyClusterFit<TMetric>(r, g, b, bestIndices, ref best, ref bestError);
+        SearchColorEndpoints<TMetric>(r, g, b, ref best, ref bestError);
+        MatchFourColor<TMetric>(r, g, b, best, bestIndices);
         PackColorBlocks(best, bestIndices, color0, color1, masks);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<int> FitBestCandidate(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static Vector256<int> FitBestCandidate<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         Span<Vector256<int>> bestIndices, out Endpoints best)
+        where TMetric : struct, IColorMetric
     {
         Span<Vector256<int>> indices = stackalloc Vector256<int>[16];
         Span<Vector256<float>> red = stackalloc Vector256<float>[16];
@@ -211,8 +230,8 @@ internal static class BcEncoderSimd
                 _ => Extrapolate(principal),
             };
             QuantizeEndpoints(ref endpoints);
-            Vector256<int> error = MatchFourColor(r, g, b, endpoints, indices);
-            RefineCandidate(r, g, b, red, green, blue, ref endpoints, ref error, indices);
+            Vector256<int> error = MatchFourColor<TMetric>(r, g, b, endpoints, indices);
+            RefineCandidate<TMetric>(r, g, b, red, green, blue, ref endpoints, ref error, indices);
 
             if (candidate == 0)
             {
@@ -236,9 +255,10 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void RefineCandidate(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static void RefineCandidate<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         ReadOnlySpan<Vector256<float>> red, ReadOnlySpan<Vector256<float>> green, ReadOnlySpan<Vector256<float>> blue,
         ref Endpoints endpoints, ref Vector256<int> error, Span<Vector256<int>> indices)
+        where TMetric : struct, IColorMetric
     {
         Span<Vector256<int>> refinedIndices = stackalloc Vector256<int>[16];
         Vector256<int> active = Vector256<int>.AllBitsSet;
@@ -253,7 +273,7 @@ internal static class BcEncoderSimd
             }
 
             QuantizeEndpoints(ref refined);
-            Vector256<int> refinedError = MatchFourColor(r, g, b, refined, refinedIndices);
+            Vector256<int> refinedError = MatchFourColor<TMetric>(r, g, b, refined, refinedIndices);
             active &= Vector256.LessThan(refinedError, error);
 
             if (active == Vector256<int>.Zero)
@@ -271,14 +291,15 @@ internal static class BcEncoderSimd
         }
     }
 
-    private static void ApplyClusterFit(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static void ApplyClusterFit<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         ReadOnlySpan<Vector256<int>> indices, ref Endpoints best, ref Vector256<int> bestError)
+        where TMetric : struct, IColorMetric
     {
-        Vector256<int> improved = ClusterFit(r, g, b, indices, ref best, ref bestError, BcEncoder.ClusterOrderingsPerBlock, Vector256<int>.AllBitsSet);
+        Vector256<int> improved = ClusterFit<TMetric>(r, g, b, indices, ref best, ref bestError, BcEncoder.ClusterOrderingsPerBlock, Vector256<int>.AllBitsSet);
 
         if (improved != Vector256<int>.Zero)
         {
-            ClusterFit(r, g, b, indices, ref best, ref bestError, 0, improved);
+            ClusterFit<TMetric>(r, g, b, indices, ref best, ref bestError, 0, improved);
         }
     }
 
@@ -304,8 +325,9 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<int> ClusterFit(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static Vector256<int> ClusterFit<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         ReadOnlySpan<Vector256<int>> indices, ref Endpoints best, ref Vector256<int> bestError, int orderingCount, Vector256<int> active)
+        where TMetric : struct, IColorMetric
     {
         Span<Vector256<int>> redGreen = stackalloc Vector256<int>[16];
         Span<Vector256<int>> blue = stackalloc Vector256<int>[16];
@@ -324,10 +346,10 @@ internal static class BcEncoderSimd
 
         if (orderingCount > 0)
         {
-            TryTableOrderings(r, g, b, indices, redGreen, blue, totalRedGreen, totalBlue, orderingCount, active, ref fit, ref fitError);
+            TryTableOrderings<TMetric>(r, g, b, indices, redGreen, blue, totalRedGreen, totalBlue, orderingCount, active, ref fit, ref fitError);
         }
 
-        TryColorGroups(r, g, b, redGreen, blue, totalRedGreen, totalBlue, active, ref fit, ref fitError);
+        TryColorGroups<TMetric>(r, g, b, redGreen, blue, totalRedGreen, totalBlue, active, ref fit, ref fitError);
 
         Vector256<int> accept = active & Vector256.LessThan(fitError, bestError);
         Select(accept, ref best, fit);
@@ -366,16 +388,17 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void TryTableOrderings(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static void TryTableOrderings<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         ReadOnlySpan<Vector256<int>> indices, ReadOnlySpan<Vector256<int>> redGreen, ReadOnlySpan<Vector256<int>> blue,
         Vector256<int> totalRedGreen, Vector256<int> totalBlue, int orderingCount, Vector256<int> active, ref Endpoints fit, ref Vector256<int> fitError)
+        where TMetric : struct, IColorMetric
     {
         Span<int> plan = stackalloc int[3 * Lanes * orderingCount];
         BuildOrderingPlan(indices, orderingCount, plan);
 
         for (int ordering = 0; ordering < orderingCount; ordering++)
         {
-            TrySplit(r, g, b, redGreen, blue, totalRedGreen, totalBlue, Vector256.Create<int>(plan.Slice(ordering * 3 * Lanes, Lanes)),
+            TrySplit<TMetric>(r, g, b, redGreen, blue, totalRedGreen, totalBlue, Vector256.Create<int>(plan.Slice(ordering * 3 * Lanes, Lanes)),
                 Vector256.Create<int>(plan.Slice((ordering * 3 + 1) * Lanes, Lanes)), Vector256.Create<int>(plan.Slice((ordering * 3 + 2) * Lanes, Lanes)),
                 active, ref fit, ref fitError);
         }
@@ -410,9 +433,10 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void TryColorGroups(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static void TryColorGroups<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         ReadOnlySpan<Vector256<int>> redGreen, ReadOnlySpan<Vector256<int>> blue, Vector256<int> totalRedGreen, Vector256<int> totalBlue,
         Vector256<int> active, ref Endpoints fit, ref Vector256<int> fitError)
+        where TMetric : struct, IColorMetric
     {
         Span<Vector256<int>> groupSizes = stackalloc Vector256<int>[4];
         Vector256<int> group = Vector256<int>.Zero;
@@ -452,14 +476,15 @@ internal static class BcEncoderSimd
                 }
             }
 
-            TrySplit(r, g, b, redGreen, blue, totalRedGreen, totalBlue, countC0, countNearC0, countNearC1, valid, ref fit, ref fitError);
+            TrySplit<TMetric>(r, g, b, redGreen, blue, totalRedGreen, totalBlue, countC0, countNearC0, countNearC1, valid, ref fit, ref fitError);
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void TrySplit(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static void TrySplit<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         ReadOnlySpan<Vector256<int>> redGreen, ReadOnlySpan<Vector256<int>> blue, Vector256<int> totalRedGreen, Vector256<int> totalBlue,
         Vector256<int> countC0, Vector256<int> countNearC0, Vector256<int> countNearC1, Vector256<int> valid, ref Endpoints fit, ref Vector256<int> fitError)
+        where TMetric : struct, IColorMetric
     {
         Vector256<int> countC1 = Vector256.Create(16) - countC0 - countNearC0 - countNearC1;
         Vector256<int> end0 = countC0, end1 = countC0 + countNearC0, end2 = end1 + countNearC1;
@@ -496,7 +521,7 @@ internal static class BcEncoderSimd
         (trial.R0, trial.R1) = FitChannel(LowHalf(sumThrough0RedGreen), LowHalf(sumThrough1RedGreen), LowHalf(sumThrough2RedGreen), LowHalf(totalRedGreen), sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 5);
         (trial.G0, trial.G1) = FitChannel(HighHalf(sumThrough0RedGreen), HighHalf(sumThrough1RedGreen), HighHalf(sumThrough2RedGreen), HighHalf(totalRedGreen), sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 6);
         (trial.B0, trial.B1) = FitChannel(sumThrough0Blue, sumThrough1Blue, sumThrough2Blue, totalBlue, sum9W0W0, sum9W1W1, sum9W0W1, determinantFloat, 5);
-        Vector256<int> error = MatchFourColorError(r, g, b, trial);
+        Vector256<int> error = MatchFourColorError<TMetric>(r, g, b, trial);
         Vector256<int> better = valid & Vector256.LessThan(error, fitError);
 
         if (better == Vector256<int>.Zero)
@@ -523,8 +548,9 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void SearchColorEndpoints(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static void SearchColorEndpoints<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         ref Endpoints best, ref Vector256<int> error)
+        where TMetric : struct, IColorMetric
     {
         for (int round = 0; round < BcEncoder.EndpointSearchRounds; round++)
         {
@@ -543,7 +569,7 @@ internal static class BcEncoderSimd
 
                     Endpoints trial = best;
                     Set(ref trial, e, bits == 6 ? Expand6(level) : Expand5(level));
-                    Vector256<int> trialError = MatchFourColorError(r, g, b, trial);
+                    Vector256<int> trialError = MatchFourColorError<TMetric>(r, g, b, trial);
                     Vector256<int> accept = valid & Vector256.LessThan(trialError, error);
 
                     if (accept == Vector256<int>.Zero)
@@ -783,8 +809,9 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<int> MatchFourColor(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static Vector256<int> MatchFourColor<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         in Endpoints e, Span<Vector256<int>> indices)
+        where TMetric : struct, IColorMetric
     {
         Vector256<int> two = Vector256.Create(2);
         Vector256<int> p2r = Divide3(two * e.R0 + e.R1), p2g = Divide3(two * e.G0 + e.G1), p2b = Divide3(two * e.B0 + e.B1);
@@ -793,20 +820,20 @@ internal static class BcEncoderSimd
 
         for (int i = 0; i < 16; i++)
         {
-            Vector256<int> bestError = Distance(r[i], g[i], b[i], e.R0, e.G0, e.B0);
+            Vector256<int> bestError = Distance<TMetric>(r[i], g[i], b[i], e.R0, e.G0, e.B0);
             Vector256<int> best = Vector256<int>.Zero;
 
-            Vector256<int> error = Distance(r[i], g[i], b[i], e.R1, e.G1, e.B1);
+            Vector256<int> error = Distance<TMetric>(r[i], g[i], b[i], e.R1, e.G1, e.B1);
             Vector256<int> lower = Vector256.LessThan(error, bestError);
             bestError = Vector256.ConditionalSelect(lower, error, bestError);
             best = Vector256.ConditionalSelect(lower, Vector256.Create(BcEncoder.IndexC1), best);
 
-            error = Distance(r[i], g[i], b[i], p2r, p2g, p2b);
+            error = Distance<TMetric>(r[i], g[i], b[i], p2r, p2g, p2b);
             lower = Vector256.LessThan(error, bestError);
             bestError = Vector256.ConditionalSelect(lower, error, bestError);
             best = Vector256.ConditionalSelect(lower, Vector256.Create(BcEncoder.IndexNearC0), best);
 
-            error = Distance(r[i], g[i], b[i], p3r, p3g, p3b);
+            error = Distance<TMetric>(r[i], g[i], b[i], p3r, p3g, p3b);
             lower = Vector256.LessThan(error, bestError);
             bestError = Vector256.ConditionalSelect(lower, error, bestError);
             best = Vector256.ConditionalSelect(lower, Vector256.Create(BcEncoder.IndexNearC1), best);
@@ -819,8 +846,9 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vector256<int> MatchFourColorError(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
+    private static Vector256<int> MatchFourColorError<TMetric>(ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
         in Endpoints e)
+        where TMetric : struct, IColorMetric
     {
         Vector256<int> two = Vector256.Create(2);
         Vector256<int> p2r = Divide3(two * e.R0 + e.R1), p2g = Divide3(two * e.G0 + e.G1), p2b = Divide3(two * e.B0 + e.B1);
@@ -830,8 +858,8 @@ internal static class BcEncoderSimd
         for (int i = 0; i < 16; i++)
         {
             Vector256<int> nearest = Vector256.Min(
-                Vector256.Min(Distance(r[i], g[i], b[i], e.R0, e.G0, e.B0), Distance(r[i], g[i], b[i], e.R1, e.G1, e.B1)),
-                Vector256.Min(Distance(r[i], g[i], b[i], p2r, p2g, p2b), Distance(r[i], g[i], b[i], p3r, p3g, p3b)));
+                Vector256.Min(Distance<TMetric>(r[i], g[i], b[i], e.R0, e.G0, e.B0), Distance<TMetric>(r[i], g[i], b[i], e.R1, e.G1, e.B1)),
+                Vector256.Min(Distance<TMetric>(r[i], g[i], b[i], p2r, p2g, p2b), Distance<TMetric>(r[i], g[i], b[i], p3r, p3g, p3b)));
             total += nearest;
         }
 
@@ -839,10 +867,11 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vector256<int> Distance(Vector256<int> r, Vector256<int> g, Vector256<int> b, Vector256<int> pr, Vector256<int> pg, Vector256<int> pb)
+    private static Vector256<int> Distance<TMetric>(Vector256<int> r, Vector256<int> g, Vector256<int> b, Vector256<int> pr, Vector256<int> pg, Vector256<int> pb)
+        where TMetric : struct, IColorMetric
     {
         Vector256<int> dr = r - pr, dg = g - pg, db = b - pb;
-        return dr * dr + dg * dg + db * db;
+        return TMetric.Weigh(dr * dr, dg * dg, db * db);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -1225,12 +1254,20 @@ internal static class BcEncoderSimd
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public static void WriteColorBlocks(ReadOnlySpan<byte> blocks, ReadOnlySpan<Vector256<int>> r, ReadOnlySpan<Vector256<int>> g, ReadOnlySpan<Vector256<int>> b,
-        int count, Span<byte> dest, int stride)
+        int count, Span<byte> dest, int stride, bool perceptual)
     {
         Span<int> color0 = stackalloc int[Lanes];
         Span<int> color1 = stackalloc int[Lanes];
         Span<uint> masks = stackalloc uint[Lanes];
-        EncodeColor(r, g, b, color0, color1, masks);
+
+        if (perceptual)
+        {
+            EncodeColor<PerceptualColorMetric>(r, g, b, color0, color1, masks);
+        }
+        else
+        {
+            EncodeColor<UniformColorMetric>(r, g, b, color0, color1, masks);
+        }
 
         for (int lane = 0; lane < count; lane++)
         {
@@ -1715,6 +1752,82 @@ internal static class BcEncoderSimd
     private const int PartitionRefineIterations = 1;
     private const int PowerIterations = 8;
     private const float ThreeSubsetErrorThreshold = 200;
+    private static readonly float[] PerceptualMetric = BuildPerceptualMetric();
+    private static readonly float[] ChannelWeights = BuildChannelWeights();
+
+    private static float[] BuildPerceptualMetric()
+    {
+        float yl = MathF.Sqrt(3f), cr = 1f, cb = 0.5f;
+        return
+        [
+            yl * 0.299f, yl * 0.587f, yl * 0.114f, 0f,
+            cr * 0.701f, cr * -0.587f, cr * -0.114f, 0f,
+            cb * -0.299f, cb * -0.587f, cb * 0.886f, 0f,
+            0f, 0f, 0f, 1f,
+        ];
+    }
+
+    private static float[] BuildChannelWeights()
+    {
+        float[] m = PerceptualMetric;
+        float[] w = new float[4];
+
+        for (int c = 0; c < 4; c++)
+        {
+            float sum = 0f;
+
+            for (int row = 0; row < 4; row++)
+            {
+                sum += m[row * 4 + c] * m[row * 4 + c];
+            }
+
+            w[c] = MathF.Sqrt(sum);
+        }
+
+        return w;
+    }
+
+    private static void TransformPixels(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<float> metric, int channels, Span<Vector256<float>> result)
+    {
+        for (int i = 0; i < 16; i++)
+        {
+            for (int c = 0; c < channels; c++)
+            {
+                Vector256<float> sum = Vector256<float>.Zero;
+
+                for (int d = 0; d < channels; d++)
+                {
+                    sum += Vector256.Create(metric[c * channels + d]) * pixels[d * 16 + i];
+                }
+
+                result[c * 16 + i] = sum;
+            }
+        }
+    }
+
+    private static void ScalePixels(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<float> scales, Span<Vector256<float>> result)
+    {
+        for (int c = 0; c < 4; c++)
+        {
+            Vector256<float> scale = Vector256.Create(scales[c]);
+
+            for (int i = 0; i < 16; i++)
+            {
+                result[c * 16 + i] = pixels[c * 16 + i] * scale;
+            }
+        }
+    }
+
+    private static void Metric3(ReadOnlySpan<float> metric4, Span<float> metric3)
+    {
+        for (int c = 0; c < 3; c++)
+        {
+            for (int d = 0; d < 3; d++)
+            {
+                metric3[c * 3 + d] = metric4[c * 4 + d];
+            }
+        }
+    }
 
     private enum PBits
     {
@@ -1724,15 +1837,31 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void EncodeBc7Row(ReadOnlySpan<byte> src, int width, int height, int by, int blocksX, Span<byte> row)
+    private static void EncodeBc7Row(ReadOnlySpan<byte> src, int width, int height, int by, int blocksX, Span<byte> row, bool perceptual)
     {
         Span<byte> blocks = stackalloc byte[64 * Lanes];
         Span<byte> encoded = stackalloc byte[16 * Lanes];
         Span<Vector256<float>> pixels = stackalloc Vector256<float>[64];
         Span<Vector256<float>> rotated = stackalloc Vector256<float>[64];
+        Span<Vector256<float>> metricPixels = stackalloc Vector256<float>[64];
+        Span<Vector256<float>> scaledPixels = stackalloc Vector256<float>[64];
+        Span<Vector256<float>> metricRotated = stackalloc Vector256<float>[64];
         Span<Vector256<float>> ones = stackalloc Vector256<float>[16];
         Span<Vector256<int>> partitions = stackalloc Vector256<int>[2];
+        Span<float> metric3 = stackalloc float[9];
+        Span<float> rotatedMetric = stackalloc float[9];
+        Span<float> alphaMetric = stackalloc float[1];
+        ReadOnlySpan<float> metric4 = perceptual ? PerceptualMetric : default;
         ones.Fill(Vector256.Create(1f));
+
+        if (perceptual)
+        {
+            Metric3(metric4, metric3);
+        }
+        else
+        {
+            metric3 = default;
+        }
 
         for (int bx = 0; bx < blocksX; bx += Lanes)
         {
@@ -1745,41 +1874,81 @@ internal static class BcEncoderSimd
             }
 
             LoadPlanes(blocks, pixels);
+
+            if (perceptual)
+            {
+                TransformPixels(pixels, metric4, 4, metricPixels);
+                ScalePixels(pixels, ChannelWeights, scaledPixels);
+            }
+            else
+            {
+                pixels.CopyTo(metricPixels);
+            }
+
             Vector256<float> alphaError = OpaqueAlphaError(pixels);
             Vector256<float> translucent = Vector256.GreaterThan(alphaError, Vector256<float>.Zero);
             bool anyTranslucent = translucent != Vector256<float>.Zero;
             int estimateChannels = anyTranslucent ? 4 : 3;
             Vector256<float> bestError = Vector256.Create(float.MaxValue);
-            EncodeEndpointMode(pixels, 6, Vector256<int>.Zero, alphaError, Vector256<float>.AllBitsSet, ref bestError, encoded);
+            EncodeEndpointMode(pixels, metricPixels, metric4, metric3, 6, Vector256<int>.Zero, alphaError, Vector256<float>.AllBitsSet, ref bestError, encoded);
 
             for (int rotation = anyTranslucent ? 0 : 1; rotation < 4; rotation++)
             {
                 Vector256<float> allowed = rotation == 0 ? translucent : Vector256<float>.AllBitsSet;
                 Rotate(pixels, rotation, rotated);
-                EncodeMode5(rotated, ones, rotation, allowed, ref bestError, encoded);
+                scoped ReadOnlySpan<float> colorMetric = default;
+                scoped ReadOnlySpan<float> alphaFitMetric = default;
+
+                if (perceptual && rotation == 0)
+                {
+                    metricPixels.CopyTo(metricRotated);
+                    colorMetric = metric3;
+                    alphaMetric[0] = 1f;
+                    alphaFitMetric = alphaMetric;
+                }
+                else if (perceptual)
+                {
+                    Rotate(scaledPixels, rotation, metricRotated);
+                    rotatedMetric.Clear();
+
+                    for (int c = 0; c < 3; c++)
+                    {
+                        rotatedMetric[c * 4] = c == rotation - 1 ? ChannelWeights[3] : ChannelWeights[c];
+                    }
+
+                    alphaMetric[0] = ChannelWeights[rotation - 1];
+                    colorMetric = rotatedMetric;
+                    alphaFitMetric = alphaMetric;
+                }
+                else
+                {
+                    rotated.CopyTo(metricRotated);
+                }
+
+                EncodeMode5(rotated, metricRotated, colorMetric, alphaFitMetric, ones, rotation, allowed, ref bestError, encoded);
 
                 for (int indexSelection = 0; indexSelection < 2; indexSelection++)
                 {
-                    EncodeMode4(rotated, ones, rotation, indexSelection, allowed, ref bestError, encoded);
+                    EncodeMode4(rotated, metricRotated, colorMetric, alphaFitMetric, ones, rotation, indexSelection, allowed, ref bestError, encoded);
                 }
             }
 
-            EstimatePartitions(pixels, estimateChannels, 2, 64, partitions);
-            EncodeEndpointMode(pixels, 1, partitions[1], alphaError, Vector256<float>.AllBitsSet, ref bestError, encoded);
-            EncodeEndpointMode(pixels, 3, partitions[1], alphaError, Vector256<float>.AllBitsSet, ref bestError, encoded);
+            EstimatePartitions(metricPixels, estimateChannels, 2, 64, partitions);
+            EncodeEndpointMode(pixels, metricPixels, metric4, metric3, 1, partitions[1], alphaError, Vector256<float>.AllBitsSet, ref bestError, encoded);
+            EncodeEndpointMode(pixels, metricPixels, metric4, metric3, 3, partitions[1], alphaError, Vector256<float>.AllBitsSet, ref bestError, encoded);
 
             if (anyTranslucent)
             {
-                EncodeEndpointMode(pixels, 7, partitions[1], alphaError, translucent, ref bestError, encoded);
+                EncodeEndpointMode(pixels, metricPixels, metric4, metric3, 7, partitions[1], alphaError, translucent, ref bestError, encoded);
             }
 
             Vector256<float> needsThreeSubsets = Vector256.GreaterThan(bestError, Vector256.Create(ThreeSubsetErrorThreshold));
 
             if (needsThreeSubsets != Vector256<float>.Zero)
             {
-                EstimatePartitions(pixels, estimateChannels, 3, 64, partitions);
-                EncodeEndpointMode(pixels, 0, partitions[0], alphaError, needsThreeSubsets, ref bestError, encoded);
-                EncodeEndpointMode(pixels, 2, partitions[1], alphaError, needsThreeSubsets, ref bestError, encoded);
+                EstimatePartitions(metricPixels, estimateChannels, 3, 64, partitions);
+                EncodeEndpointMode(pixels, metricPixels, metric4, metric3, 0, partitions[0], alphaError, needsThreeSubsets, ref bestError, encoded);
+                EncodeEndpointMode(pixels, metricPixels, metric4, metric3, 2, partitions[1], alphaError, needsThreeSubsets, ref bestError, encoded);
             }
 
             encoded[..(count * 16)].CopyTo(row[(bx * 16)..]);
@@ -2023,8 +2192,8 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void EncodeEndpointMode(ReadOnlySpan<Vector256<float>> pixels, int mode, Vector256<int> partition, Vector256<float> alphaError,
-        Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
+    private static void EncodeEndpointMode(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> metricPixels, ReadOnlySpan<float> metric4, ReadOnlySpan<float> metric3,
+        int mode, Vector256<int> partition, Vector256<float> alphaError, Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
     {
         BcDecoder.Bc7ModeInfo info = BcDecoder.Bc7Modes[mode];
         int channels = info.AlphaBits > 0 ? 4 : 3;
@@ -2071,7 +2240,7 @@ internal static class BcEncoderSimd
                 weights[i] = Vector256.ConditionalSelect(Vector256.Equals(subsetOf[i], Vector256.Create(subset)).AsSingle(), Vector256.Create(1f), Vector256<float>.Zero);
             }
 
-            error += FitEndpoints(pixels[..(channels * 16)], weights, channels, info.ColorBits, pBitMode, info.IndexBits,
+            error += FitEndpoints(pixels[..(channels * 16)], metricPixels[..(channels * 16)], channels == 4 ? metric4 : metric3, weights, channels, info.ColorBits, pBitMode, info.IndexBits,
                 info.Subsets == 1 ? RefineIterations : PartitionRefineIterations, anchors[subset],
                 codes.Slice(subset * 8, 8), pBits.Slice(subset * 2, 2), indices.Slice(subset * 16, 16));
         }
@@ -2120,15 +2289,16 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void EncodeMode5(ReadOnlySpan<Vector256<float>> rotated, ReadOnlySpan<Vector256<float>> ones, int rotation, Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
+    private static void EncodeMode5(ReadOnlySpan<Vector256<float>> rotated, ReadOnlySpan<Vector256<float>> metricRotated, ReadOnlySpan<float> colorMetric, ReadOnlySpan<float> alphaMetric,
+        ReadOnlySpan<Vector256<float>> ones, int rotation, Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
     {
         Span<Vector256<int>> colorCodes = stackalloc Vector256<int>[6];
         Span<Vector256<int>> alphaCodes = stackalloc Vector256<int>[2];
         Span<Vector256<int>> pBits = stackalloc Vector256<int>[2];
         Span<Vector256<int>> colorIndices = stackalloc Vector256<int>[16];
         Span<Vector256<int>> alphaIndices = stackalloc Vector256<int>[16];
-        Vector256<float> error = FitEndpoints(rotated[..48], ones, 3, 7, PBits.None, 2, RefineIterations, Vector256<int>.Zero, colorCodes, pBits, colorIndices)
-            + FitEndpoints(rotated[48..], ones, 1, 8, PBits.None, 2, RefineIterations, Vector256<int>.Zero, alphaCodes, pBits, alphaIndices);
+        Vector256<float> error = FitEndpoints(rotated[..48], metricRotated[..48], colorMetric, ones, 3, 7, PBits.None, 2, RefineIterations, Vector256<int>.Zero, colorCodes, pBits, colorIndices)
+            + FitEndpoints(rotated[48..], metricRotated[48..], alphaMetric, ones, 1, 8, PBits.None, 2, RefineIterations, Vector256<int>.Zero, alphaCodes, pBits, alphaIndices);
 
         ulong improved = Improve(error, allowed, ref encodedError);
 
@@ -2148,7 +2318,8 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void EncodeMode4(ReadOnlySpan<Vector256<float>> rotated, ReadOnlySpan<Vector256<float>> ones, int rotation, int indexSelection, Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
+    private static void EncodeMode4(ReadOnlySpan<Vector256<float>> rotated, ReadOnlySpan<Vector256<float>> metricRotated, ReadOnlySpan<float> colorMetric, ReadOnlySpan<float> alphaMetric,
+        ReadOnlySpan<Vector256<float>> ones, int rotation, int indexSelection, Vector256<float> allowed, ref Vector256<float> encodedError, Span<byte> output)
     {
         Span<Vector256<int>> colorCodes = stackalloc Vector256<int>[6];
         Span<Vector256<int>> alphaCodes = stackalloc Vector256<int>[2];
@@ -2157,8 +2328,8 @@ internal static class BcEncoderSimd
         Span<Vector256<int>> alphaIndices = stackalloc Vector256<int>[16];
         int colorIndexBits = indexSelection == 0 ? 2 : 3;
         int alphaIndexBits = indexSelection == 0 ? 3 : 2;
-        Vector256<float> error = FitEndpoints(rotated[..48], ones, 3, 5, PBits.None, colorIndexBits, RefineIterations, Vector256<int>.Zero, colorCodes, pBits, colorIndices)
-            + FitEndpoints(rotated[48..], ones, 1, 6, PBits.None, alphaIndexBits, RefineIterations, Vector256<int>.Zero, alphaCodes, pBits, alphaIndices);
+        Vector256<float> error = FitEndpoints(rotated[..48], metricRotated[..48], colorMetric, ones, 3, 5, PBits.None, colorIndexBits, RefineIterations, Vector256<int>.Zero, colorCodes, pBits, colorIndices)
+            + FitEndpoints(rotated[48..], metricRotated[48..], alphaMetric, ones, 1, 6, PBits.None, alphaIndexBits, RefineIterations, Vector256<int>.Zero, alphaCodes, pBits, alphaIndices);
 
         ulong improved = Improve(error, allowed, ref encodedError);
 
@@ -2196,8 +2367,9 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<float> FitEndpoints(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, int channels, int bits,
-        PBits pBitMode, int indexBits, int refineIterations, Vector256<int> anchor, Span<Vector256<int>> bestCodes, Span<Vector256<int>> bestPBits, Span<Vector256<int>> bestIndices)
+    private static Vector256<float> FitEndpoints(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> metricPixels, ReadOnlySpan<float> metric,
+        ReadOnlySpan<Vector256<float>> weights, int channels, int bits, PBits pBitMode, int indexBits, int refineIterations, Vector256<int> anchor,
+        Span<Vector256<int>> bestCodes, Span<Vector256<int>> bestPBits, Span<Vector256<int>> bestIndices)
     {
         Span<Vector256<float>> endpoints = stackalloc Vector256<float>[8];
         Span<Vector256<float>> expanded = stackalloc Vector256<float>[8];
@@ -2229,7 +2401,7 @@ internal static class BcEncoderSimd
                     }
                 }
 
-                Vector256<float> error = MatchIndices(pixels, weights, channels, expanded, indexBits, indices);
+                Vector256<float> error = MatchIndices(metricPixels, metric, weights, channels, expanded, indexBits, indices);
                 Vector256<int> better = Vector256.LessThan(error, bestError).AsInt32();
                 bestError = Vector256.Min(error, bestError);
                 bestPBits[0] = Vector256.ConditionalSelect(better, pBit0, bestPBits[0]);
@@ -2416,11 +2588,12 @@ internal static class BcEncoderSimd
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<float> MatchIndices(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<Vector256<float>> weights, int channels, ReadOnlySpan<Vector256<float>> endpoints, int indexBits,
-        Span<Vector256<int>> indices)
+    private static Vector256<float> MatchIndices(ReadOnlySpan<Vector256<float>> pixels, ReadOnlySpan<float> metric, ReadOnlySpan<Vector256<float>> weights, int channels,
+        ReadOnlySpan<Vector256<float>> endpoints, int indexBits, Span<Vector256<int>> indices)
     {
         int count = 1 << indexBits;
         Span<Vector256<float>> palette = stackalloc Vector256<float>[16 * 4];
+        Span<Vector256<float>> entry = stackalloc Vector256<float>[4];
 
         for (int k = 0; k < count; k++)
         {
@@ -2429,7 +2602,25 @@ internal static class BcEncoderSimd
 
             for (int c = 0; c < channels; c++)
             {
-                palette[k * 4 + c] = Vector256.Floor((inverse * endpoints[c] + weight * endpoints[channels + c] + Vector256.Create(32f)) * Vector256.Create(1f / 64));
+                entry[c] = Vector256.Floor((inverse * endpoints[c] + weight * endpoints[channels + c] + Vector256.Create(32f)) * Vector256.Create(1f / 64));
+            }
+
+            if (metric.IsEmpty)
+            {
+                entry[..channels].CopyTo(palette.Slice(k * 4, channels));
+                continue;
+            }
+
+            for (int c = 0; c < channels; c++)
+            {
+                Vector256<float> sum = Vector256<float>.Zero;
+
+                for (int d = 0; d < channels; d++)
+                {
+                    sum += Vector256.Create(metric[c * channels + d]) * entry[d];
+                }
+
+                palette[k * 4 + c] = sum;
             }
         }
 

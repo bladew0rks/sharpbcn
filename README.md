@@ -29,6 +29,13 @@ Half[] hdrBack = BcDecoder.DecodeBc6h(bc6h, width, height, signed: false);
 
 `BcFormat.Bc1Alpha` makes pixels below `alphaThreshold` (default 128) transparent.
 
+`perceptual: true` weights errors by how visible they are (luma over chroma for BC7, green over red over blue for BC1 to BC3).
+It scores higher on SSIMULACRA 2 at the cost of some PSNR, so use it for color textures and leave it off for normal maps and masks.
+
+```csharp
+byte[] albedo = BcEncoder.EncodeBc7(rgba, width, height, perceptual: true);
+```
+
 ## RDO
 
 `BcRdo.Optimize` rewrites already encoded blocks so they repeat byte runs from nearby blocks, trading a little quality for a much smaller file once it's compressed with zstd, deflate or LZMA.
@@ -95,6 +102,7 @@ Its best quality setting, except BC7 on textures and CLIC, which use fast.
 | Encoder | Textures time | Textures | Kodak | CLIC time | CLIC |
 |---|---|---|---|---|---|
 | SharpBcn | 0.83 s | 83.18 | 82.78 | 0.54 s | 83.33 |
+| SharpBcn, perceptual | 0.83 s | 83.68 | 83.38 | 0.58 s | 83.99 |
 | rgbcx (bc7enc_rdo), level 18 | 9.87 s | 83.70 | 83.04 | 8.63 s | 83.57 |
 | rgbcx (bc7enc_rdo), level 10 | 4.02 s | 82.93 | 82.18 | 2.40 s | 82.68 |
 | icbc, level 9 | 2.07 s | 82.82 | 82.62 | 2.16 s | 82.89 |
@@ -137,7 +145,9 @@ Its best quality setting, except BC7 on textures and CLIC, which use fast.
 | Encoder | Textures time | Textures | Kodak | CLIC time | CLIC |
 |---|---|---|---|---|---|
 | SharpBcn | 2.91 s | 89.92 | 92.25 | 2.58 s | 91.32 |
+| SharpBcn, perceptual | 2.93 s | 90.15 | 92.79 | 2.67 s | 91.85 |
 | bc7e (bc7enc_rdo), level 4 | 5.02 s | 89.93 | 92.38 | 3.38 s | 91.49 |
+| bc7e (bc7enc_rdo), level 4, perceptual | 4.23 s | 90.14 | 92.80 | 2.85 s | 91.99 |
 | bc7e (bc7enc_rdo), level 2 | 3.81 s | 89.60 | 92.12 | 2.07 s | 91.43 |
 | bc7enc (bc7enc_rdo), level 4 | 7.55 s | 89.29 | 92.15 | 5.41 s | 91.41 |
 | ISPC Texture Compressor, slow | 16.81 s | 90.00 | 92.34 | 16.61 s | 91.45 |
@@ -192,7 +202,7 @@ ISPC has no signed BC6H, and BCnEncoder.NET's signed fast setting produced broke
 <summary>Encoder settings</summary>
 
 - rgbcx: `bc7enc -1 -L18`, `-1 -L10`, `-4`
-- bc7e: `bc7enc -U -u4`, `-U -u2`, built with ISPC 1.31
+- bc7e: `bc7enc -U -u4`, `-U -u2`, `-U -s -u4` for perceptual, built with ISPC 1.31
 - bc7enc: `bc7enc -C -u4`
 - Compressonator 4.5.52: `-fd <format> -Quality <q> -nomipmap`
 - [icbc](https://github.com/castano/icbc): D3D10 decoder, equal weights, 3-color mode and 3-color black on

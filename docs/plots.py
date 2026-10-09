@@ -9,6 +9,7 @@ DATA = {
     'BC1': {
         'Textures': [
             ('SharpBcn', 0.83, 83.18),
+            ('SharpBcn perceptual', 0.83, 83.68),
             ('rgbcx 18', 9.87, 83.7),
             ('rgbcx 10', 4.02, 82.93),
             ('icbc 9', 2.07, 82.82),
@@ -22,6 +23,7 @@ DATA = {
         ],
         'CLIC': [
             ('SharpBcn', 0.54, 83.33),
+            ('SharpBcn perceptual', 0.58, 83.99),
             ('rgbcx 18', 8.63, 83.57),
             ('rgbcx 10', 2.4, 82.68),
             ('icbc 9', 2.16, 82.89),
@@ -37,7 +39,9 @@ DATA = {
     'BC7': {
         'Textures': [
             ('SharpBcn', 2.91, 89.92),
+            ('SharpBcn perceptual', 2.93, 90.15),
             ('bc7e 4', 5.02, 89.93),
+            ('bc7e 4 perceptual', 4.23, 90.14),
             ('bc7e 2', 3.81, 89.6),
             ('bc7enc 4', 7.55, 89.29),
             ('ISPC slow', 16.81, 90.0),
@@ -48,7 +52,9 @@ DATA = {
         ],
         'CLIC': [
             ('SharpBcn', 2.58, 91.32),
+            ('SharpBcn perceptual', 2.67, 91.85),
             ('bc7e 4', 3.38, 91.49),
+            ('bc7e 4 perceptual', 2.85, 91.99),
             ('bc7e 2', 2.07, 91.43),
             ('bc7enc 4', 5.41, 91.41),
             ('ISPC slow', 16.61, 91.45),
@@ -112,6 +118,7 @@ OFFSETS = {
     ('BC1', 'Textures', 'BCnEncoder.NET balanced'): (-7, 12, 'right'),
     ('BC1', 'Textures', 'BCnEncoder.NET fast'): (-7, 3, 'right'),
     ('BC7', 'Textures', 'SharpBcn'): (-9, 6, 'right'),
+    ('BC7', 'Textures', 'SharpBcn perceptual'): (0, 10, 'center'),
     ('BC7', 'Textures', 'bc7e 4'): (6, 5, 'left'),
     ('BC7', 'Textures', 'Compressonator 0.05'): (-7, -11, 'right'),
     ('BC7', 'Textures', 'BCnEncoder.NET fast'): (-7, 6, 'right'),
@@ -178,7 +185,7 @@ def scatter(axis, fmt, panel, points, theme, limits):
     for name, time, quality in points:
         clipped = quality < low
         y = low + (high - low) * 0.02 if clipped else quality
-        main = name == 'SharpBcn'
+        main = name.startswith('SharpBcn')
         axis.scatter([time], [y], s=90 if main else 34, color=color(name), marker='v' if clipped else 'o', zorder=3,
                      edgecolors=theme['text'] if main else 'none', linewidths=0.8)
         label = f'{name} ({quality:g})' if clipped else name
